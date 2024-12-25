@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>도파민 모아</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            padding: 0;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        .content {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+            background-color: #fff;
+        }
+        .content h3 {
+            margin: 0 0 10px;
+        }
+        .feedback-buttons label {
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>도파민 모아 추천 콘텐츠</h1>
+    <form action="/feedback" method="POST">
+        {% for content in recommendations %}
+        <div class="content">
+            <h3>{{ content.title }}</h3>
+            <p>카테고리: {{ content.category }}</p>
+            <p><a href="{{ content.link }}" target="_blank">링크로 이동</a></p>
+            <div class="feedback-buttons">
+                <label>
+                    <input type="radio" name="{{ content.id }}" value="1" required> 좋아요
+                </label>
+                <label>
+                    <input type="radio" name="{{ content.id }}" value="-1"> 싫어요
+                </label>
+                <label>
+                    <input type="radio" name="{{ content.id }}" value="0"> 무반응
+                </label>
+            </div>
+        </div>
+        {% endfor %}
+        <button type="submit">피드백 제출</button>
+    </form>
+</body>
+</html>
