@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 from torch.utils.data import DataLoader, Dataset
 import re
 from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
+import asyncio
 
 # Flask 앱 생성
 app = Flask(__name__)
@@ -51,12 +53,13 @@ class TextDataset(Dataset):
 
 # 병렬 임베딩 함수
 @torch.no_grad()
-def embed_texts_parallel(texts, batch_size=16):
+async def embed_texts_parallel(texts, batch_size=16):
     dataset = TextDataset(texts)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     embeddings = []
     model.eval()
+
     for batch in dataloader:
         inputs = tokenizer(batch, return_tensors="pt", truncation=True, padding=True, max_length=128).to(device)
         outputs = model(**inputs)
@@ -65,23 +68,19 @@ def embed_texts_parallel(texts, batch_size=16):
 
     return embeddings
 
-def fetch_clien_contents():
+async def fetch_clien_contents():
     url = "https://www.clien.net/service/recommend"
     start_id = 1
     category = "Community"
 
     try:
-        with sync_playwright() as p:
-            # 브라우저 설정 및 페이지 열기
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=60000)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=60000)
 
-            # 데이터 로드 대기
-            page.wait_for_selector(".list_item", timeout=15000)
-
-            # 게시글 정보 수집
-            articles = page.query_selector_all(".list_item")
+            await page.wait_for_selector(".list_item", timeout=15000)
+            articles = await page.query_selector_all(".list_item")
 
             if not articles:
                 print("데이터를 찾지 못했습니다. 페이지 구조를 다시 확인하세요.")
@@ -90,31 +89,15 @@ def fetch_clien_contents():
             contents = []
             for i, article in enumerate(articles):
                 try:
-                    # 제목, 링크, 작성자, 조회수, 댓글 수 등 데이터 추출
-                    title_elem = article.query_selector("span.subject_fixed")
-                    link_elem = article.query_selector("a.list_subject")
-                    # writer_elem = article.query_selector(".list_author .nickname span")
-                    # date_elem = article.query_selector(".list_time .timestamp")
-                    # hits_elem = article.query_selector(".list_hit .hit")
-                    # comments_elem = article.query_selector(".list_reply .rSymph05")
-                    # likes_elem = article.query_selector(".list_symph span")
+                    title_elem = await article.query_selector("span.subject_fixed")
+                    link_elem = await article.query_selector("a.list_subject")
 
-                    title = title_elem.inner_text().strip() if title_elem else "No Title"
-                    link = link_elem.get_attribute("href") if link_elem else None
-                    # writer = writer_elem.inner_text().strip() if writer_elem else "Unknown"
-                    # date = date_elem.inner_text().strip() if date_elem else "Unknown"
-                    # hits = hits_elem.inner_text().strip() if hits_elem else "0"
-                    # comments = comments_elem.inner_text().strip() if comments_elem else "0"
-                    # likes = likes_elem.inner_text().strip() if likes_elem else "0"
+                    title = await title_elem.inner_text() if title_elem else "No Title"
+                    link = await link_elem.get_attribute("href") if link_elem else None
 
                     contents.append({
                         "id": start_id + i,
-                        "title": title,
-                        # "writer": writer,
-                        # "date": date,
-                        # "hits": hits,
-                        # "comments": comments,
-                        # "likes": likes,
+                        "title": title.strip(),
                         "category": category,
                         "link": f"https://www.clien.net{link}" if link else None,
                     })
@@ -122,32 +105,26 @@ def fetch_clien_contents():
                     print(f"게시글 추출 중 오류: {e}")
                     continue
 
-            # 브라우저 닫기
-            browser.close()
+            await browser.close()
             return contents
 
     except Exception as e:
         print(f"{category} - Error: {e}")
         return []
 
-
-def fetch_inven_contents():
+async def fetch_inven_contents():
     url = "https://hot.inven.co.kr/"
     start_id = 1
     category = "Community"
 
     try:
-        with sync_playwright() as p:
-            # 브라우저 설정 및 페이지 열기
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=60000)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=60000)
 
-            # 데이터 로드 대기
-            page.wait_for_selector(".list-common.con", timeout=15000)
-
-            # 데이터 수집
-            articles = page.query_selector_all(".list-common.con")
+            await page.wait_for_selector(".list-common.con", timeout=15000)
+            articles = await page.query_selector_all(".list-common.con")
 
             if not articles:
                 print("데이터를 찾지 못했습니다. 페이지 구조를 다시 확인하세요.")
@@ -156,86 +133,57 @@ def fetch_inven_contents():
             contents = []
             for i, article in enumerate(articles):
                 try:
-                    # 제목, 링크 추출
-                    title_elem = article.query_selector(".title .name")
-                    link_elem = article.query_selector(".title a")
-                    # category_elem = article.query_selector(".cate")
-                    # comment_elem = article.query_selector(".comment")
-                    # writer_elem = article.query_selector(".writer .layerNickName")
-                    # date_elem = article.query_selector(".date")
-                    # hits_elem = article.query_selector(".hits")
-                    # reco_elem = article.query_selector(".reco")
+                    title_elem = await article.query_selector(".title .name")
+                    link_elem = await article.query_selector(".title a")
 
-                    title = title_elem.inner_text().strip() if title_elem else "No Title"
-                    link = link_elem.get_attribute("href") if link_elem else None
-                    # category_name = category_elem.inner_text().strip() if category_elem else "Unknown"
-                    # comment_count = comment_elem.inner_text().strip("[]") if comment_elem else "0"
-                    # writer = writer_elem.inner_text().strip() if writer_elem else "Unknown"
-                    # date = date_elem.inner_text().strip() if date_elem else "Unknown"
-                    # hits = hits_elem.inner_text().strip() if hits_elem else "0"
-                    # reco = reco_elem.inner_text().strip() if reco_elem else "0"
+                    title = await title_elem.inner_text() if title_elem else "No Title"
+                    link = await link_elem.get_attribute("href") if link_elem else None
 
                     contents.append({
                         "id": start_id + i,
                         "title": title,
                         "category": category,
-                        # "comments": comment_count,
-                        # "writer": writer,
-                        # "date": date,
-                        # "hits": hits,
-                        # "recommendations": reco,
                         "link": link if link else None,
                     })
                 except Exception as e:
                     print(f"게시글 추출 중 오류: {e}")
                     continue
 
-            # 브라우저 닫기
-            browser.close()
+            await browser.close()
             return contents
 
     except Exception as e:
         print(f"{category} - Error: {e}")
         return []
 
-
-
-def fetch_twitch_contents():
+async def fetch_twitch_contents():
     url = "https://www.twitch.tv/directory/all"
     start_id = 1
     category = "Streaming"
 
     try:
-        with sync_playwright() as p:
-            # 브라우저 설정 및 페이지 열기
-            browser = p.chromium.launch(headless=True) 
-            page = browser.new_page()
-            page.goto(url, timeout=60000)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True) 
+            page = await browser.new_page()
+            await page.goto(url, timeout=60000)
 
-            # 데이터 로드 대기
-            page.wait_for_selector('a[data-a-target="preview-card-channel-link"]', timeout=15000)
-
-            # 카드 수집
-            cards = page.query_selector_all('a[data-a-target="preview-card-channel-link"]')
+            await page.wait_for_selector('a[data-a-target="preview-card-channel-link"]', timeout=15000)
+            cards = await page.query_selector_all('a[data-a-target="preview-card-channel-link"]')
 
             if not cards:
                 print("데이터를 찾지 못했습니다. 페이지 구조를 다시 확인하세요.")
                 return []
 
-            # 데이터 처리
             contents = []
             for i, card in enumerate(cards):
-                aria_label = card.get_attribute('aria-label')  # aria-label에서 데이터 추출
-                title = card.query_selector('h3')  # 제목 추출
-                link = card.get_attribute('href')  # 링크 추출
+                aria_label = await card.get_attribute('aria-label')
+                title_elem = await card.query_selector('h3')
+                link = await card.get_attribute('href')
+                viewer_count = await card.query_selector('p[data-a-target="preview-card-channel-link"]')
 
-                # 시청자 수는 별도 요소에서 가져와야 할 수 있음
-                viewer_count = card.query_selector('p[data-a-target="preview-card-channel-link"]')  
-
-                # 데이터 가공
-                game_title = title.get_attribute('title') if title else None
+                game_title = await title_elem.get_attribute('title') if title_elem else None
                 channel_name = aria_label.split(' ')[0] if aria_label else None
-                viewers = viewer_count.inner_text().strip() if viewer_count else "0"
+                viewers = await viewer_count.inner_text() if viewer_count else "0"
 
                 if game_title and channel_name:
                     contents.append({
@@ -247,75 +195,69 @@ def fetch_twitch_contents():
                         "link": f"https://www.twitch.tv{link}" if link else None
                     })
 
-            # 브라우저 닫기
-            browser.close()
+            await browser.close()
             return contents
 
     except Exception as e:
         print(f"{category} - Error: {e}")
         return []
-    
 
-
-def fetch_youtube_contents():
+async def fetch_youtube_contents():
     url = "https://www.youtube.com/feed/trending?gl=KR&hl=ko"
     selector = "a#video-title"
     category = "Streaming"
-
-    base_url = "https://www.youtube.com"  # Base URL for relative links
+    base_url = "https://www.youtube.com"
     contents = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, timeout=60000)
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=60000)
 
-        # Wait for the elements to load
-        page.wait_for_selector(selector)
+            await page.wait_for_selector(selector)
 
-        items = page.query_selector_all(selector)
-        for i, item in enumerate(items):
-            title = item.get_attribute("title") or item.inner_text().strip()
-            link = item.get_attribute("href")
+            items = await page.query_selector_all(selector)
+            for i, item in enumerate(items):
+                title = await item.get_attribute("title") or await item.inner_text().strip()
+                link = await item.get_attribute("href")
 
-            # Ensure the link is absolute
-            if link and not link.startswith("http"):
-                link = f"{base_url}{link}"
+                if link and not link.startswith("http"):
+                    link = f"{base_url}{link}"
 
-            if title and link:
-                contents.append({
-                    "id": 201 + i,
-                    "title": title,
-                    "category": category,
-                    "link": link
-                })
+                if title and link:
+                    contents.append({
+                        "id": 201 + i,
+                        "title": title,
+                        "category": category,
+                        "link": link
+                    })
 
-        browser.close()
+            await browser.close()
+    except Exception as e:
+        print(f"Error fetching YouTube content: {e}")
 
     return contents
 
 
-# 크롤링 함수들 업데이트
-def fetch_naver_news_contents():
+async def fetch_naver_news_contents():
     url = "https://news.naver.com/main/ranking/popularDay.naver"
     start_id = 1
     category = "News"
 
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36"})
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"{category}{e}")
+        print(f"{category} - Error: {e}")
         return []
 
     html_content = response.text
-
-    # 정규식을 사용해 뉴스 항목 추출
     pattern = re.compile(r'<a href="(https://n\.news\.naver\.com/article/[^\"]+)"[^>]*class="list_title[^>]*">([^<]+)</a>', re.S)
     matches = pattern.findall(html_content)
 
     if not matches:
-        print(f"{category} - No matches found in the HTML content. Check the page structure or pattern.")
+        print(f"{category} - No matches found.")
         return []
 
     contents = []
@@ -333,98 +275,134 @@ def fetch_naver_news_contents():
 
     return contents
 
-def fetch_google_trends_contents():
-    pytrends = TrendReq(hl='ko', tz=540)
-    trending_searches_df = pytrends.trending_searches(pn='south_korea')
 
-    contents = []
-    try:
-        for i, row in trending_searches_df.iterrows():
-            title = row[0]
-            link = f"https://www.google.com/search?q={title}"
-            contents.append({
-                "id": i + 101,
-                "title": title,
-                "category": "Google Trends",
-                "link": link
-            })
-    except Exception as e:
-        print("구글 트렌드 데이터 크롤링 실패:", e)
-
-    return contents
-
-def fetch_google_news_contents():
+async def fetch_google_news_contents():
     url = "https://news.google.com/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFZxYUdjU0FtdHZHZ0pMVWlnQVAB?hl=ko&gl=KR&ceid=KR%3Ako"
-    selector = "a.gPFEn"  # Selector for Google News article links
-    category="News"
-    base_url = "https://news.google.com"  # Base URL for relative links
+    selector = "a.gPFEn"  
+    category = "News"
+    base_url = "https://news.google.com"
     contents = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, timeout=60000)
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=60000)
 
-        # Wait for the elements to load
-        page.wait_for_selector(selector)
+            await page.wait_for_selector(selector)
+            items = await page.query_selector_all(selector)
+            for i, item in enumerate(items):
+                title = await item.inner_text()
+                link = await item.get_attribute("href")
 
-        items = page.query_selector_all(selector)
-        for i, item in enumerate(items):
-            title = item.inner_text().strip()
-            link = item.get_attribute("href")
+                if link and link.startswith("./"):
+                    link = f"{base_url}{link[1:]}"
 
-            # Ensure the link is absolute
-            if link and link.startswith("./"):
-                link = f"{base_url}{link[1:]}"
+                if title and link:
+                    contents.append({
+                        "id": i + 1,
+                        "title": title.strip(),
+                        "category": category,
+                        "link": link
+                    })
 
-            if title and link:
-                contents.append({
-                    "id": i + 1,  # Ensure unique IDs
-                    "title": title,
-                    "category": category,
-                    "link": link
-                })
+            await browser.close()
 
-        browser.close()
+    except Exception as e:
+        print(f"{category} - Error: {e}")
 
     return contents
 
-# 콘텐츠 데이터베이스를 업데이트하는 함수
-def update_contents():
+async def fetch_contents():
+    clien = asyncio.create_task(fetch_clien_contents())
+    # 다른 비동기 크롤링 작업 추가 가능
+    results = await asyncio.gather(clien)
+    return [content for result in results for content in result if result]
+
+# # 콘텐츠 데이터베이스를 업데이트하는 함수
+# def update_contents():
+#     global contents, id_to_index
+#     old_contents = contents or []
+#     old_id_map = {content["title"]: content["id"] for content in old_contents}
+
+#     # 새로운 콘텐츠 가져오기
+#     new_contents = fetch_naver_news_contents() + fetch_google_news_contents() + \
+#                    fetch_youtube_contents() + fetch_twitch_contents() + \
+#                    fetch_inven_contents() + fetch_clien_contents()
+                   
+                   
+#     random.shuffle(new_contents)
+
+#     # ID 유지: 기존 콘텐츠는 이전 ID 사용, 새 콘텐츠는 새로운 ID 부여
+#     start_id = max(old_id_map.values(), default=0) + 1
+#     for content in new_contents:
+#         if content["title"] in old_id_map:
+#             content["id"] = old_id_map[content["title"]]
+#         else:
+#             content["id"] = start_id
+#             start_id += 1
+
+#     # 콘텐츠 처리
+#     process_contents(new_contents)
+#     contents = new_contents
+#     id_to_index = {content["id"]: idx for idx, content in enumerate(contents)}
+    
+async def update_contents():
     global contents, id_to_index
+
+    # 기존 콘텐츠 저장
     old_contents = contents or []
     old_id_map = {content["title"]: content["id"] for content in old_contents}
 
-    # 새로운 콘텐츠 가져오기
-    new_contents = fetch_naver_news_contents() + fetch_google_news_contents() + \
-                   fetch_youtube_contents() + fetch_twitch_contents() + \
-                   fetch_inven_contents() + fetch_clien_contents()
-                   
-                   
-    random.shuffle(new_contents)
+    # 비동기적으로 새로운 콘텐츠 가져오기
+    new_contents = await asyncio.gather(
+        fetch_clien_contents(),
+        fetch_inven_contents(),
+        fetch_twitch_contents(),
+        fetch_youtube_contents(),
+        fetch_naver_news_contents(),
+        fetch_google_news_contents()
+    )
 
-    # ID 유지: 기존 콘텐츠는 이전 ID 사용, 새 콘텐츠는 새로운 ID 부여
+    # 중복 제거 및 ID 유지
+    combined_contents = []
+    unique_titles = set()
     start_id = max(old_id_map.values(), default=0) + 1
-    for content in new_contents:
-        if content["title"] in old_id_map:
-            content["id"] = old_id_map[content["title"]]
-        else:
-            content["id"] = start_id
-            start_id += 1
 
-    # 콘텐츠 처리
-    process_contents(new_contents)
-    contents = new_contents
+    for result in new_contents:
+        for content in result:
+            if content["title"] not in unique_titles:
+                unique_titles.add(content["title"])
+                if content["title"] in old_id_map:
+                    content["id"] = old_id_map[content["title"]]
+                else:
+                    content["id"] = start_id
+                    start_id += 1
+                combined_contents.append(content)
+
+    # 콘텐츠 섞기
+    random.shuffle(combined_contents)
+
+    # 임베딩 처리
+    await process_contents(combined_contents)
+
+    # 업데이트된 콘텐츠와 ID 매핑
+    contents = combined_contents
     id_to_index = {content["id"]: idx for idx, content in enumerate(contents)}
 
 
 # 콘텐츠 제목을 임베딩으로 변환
-def process_contents(contents):
+async def process_contents(contents):
+    if not contents:
+        print("process_contents: No contents to process.")
+        return  # contents가 비어 있으면 반환
+
     texts = [content["title"] for content in contents]
-    embeddings = embed_texts_parallel(texts)
+    embeddings = await embed_texts_parallel(texts)
+
     for content, embedding in zip(contents, embeddings):
         content["embedding"] = embedding
-
+        
 # 강화학습 네트워크 모델 정의
 class QNetwork(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -535,13 +513,22 @@ agent = DQNAgent(state_dim, action_dim)
 
 @app.route('/')
 def index():
-    update_contents()
     global contents
+
+    # 콘텐츠 업데이트 (비동기)
+    asyncio.run(update_contents())
+
+    # 콘텐츠 임베딩 추출
     embeddings = [content["embedding"] for content in contents]
+
+    # 강화학습 기반 추천
     top_actions = agent.act(embeddings)
-    top_actions = agent.getfilter(top_actions,top_k=5)
+    top_actions = agent.getfilter(top_actions, top_k=5)
     recommendations = [contents[action] for action in top_actions]
+
+    # 템플릿 렌더링
     return render_template('index.html', recommendations=recommendations)
+
 
 @app.route('/feedback', methods=['POST'])
 def feedback():
