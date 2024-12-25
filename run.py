@@ -313,12 +313,6 @@ async def fetch_google_news_contents():
 
     return contents
 
-async def fetch_contents():
-    clien = asyncio.create_task(fetch_clien_contents())
-    # 다른 비동기 크롤링 작업 추가 가능
-    results = await asyncio.gather(clien)
-    return [content for result in results for content in result if result]
-
 # # 콘텐츠 데이터베이스를 업데이트하는 함수
 # def update_contents():
 #     global contents, id_to_index
