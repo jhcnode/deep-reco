@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, jsonify,url_for
 from transformers import AutoTokenizer, AutoModel
 from bs4 import BeautifulSoup
 import requests
@@ -20,6 +20,8 @@ import re
 from playwright.sync_api import sync_playwright
 from playwright.async_api import async_playwright
 import asyncio
+from collections import defaultdict
+
 
 # Flask 앱 생성
 app = Flask(__name__)
@@ -236,7 +238,6 @@ async def fetch_youtube_contents():
             await browser.close()
     except Exception as e:
         print(f"Error fetching YouTube content: {e}")
-
     return contents
 
 
@@ -505,23 +506,66 @@ state_dim = 384
 action_dim = 2000
 agent = DQNAgent(state_dim, action_dim)
 
+from flask import jsonify
+import numpy as np
+
 @app.route('/')
 def index():
     global contents
 
+    # 사용자가 선택한 카테고리를 GET 파라미터로 받음
+    selected_category = request.args.get('category', 'all')  # 기본값은 'all'
+    mode = request.args.get('mode')  # AJAX 요청 모드: 'recommendations' or 'category_contents'
+
     # 콘텐츠 업데이트 (비동기)
     asyncio.run(update_contents())
 
-    # 콘텐츠 임베딩 추출
-    embeddings = [content["embedding"] for content in contents]
+    # 콘텐츠 필터링
+    if selected_category != 'all':
+        filtered_contents = [content for content in contents if content["category"] == selected_category]
+    else:
+        filtered_contents = contents
 
-    # 강화학습 기반 추천
+    # AJAX 요청 처리
+    if mode == 'recommendations':
+        embeddings = [content["embedding"] for content in filtered_contents]
+        top_actions = agent.act(embeddings)
+        top_actions = agent.getfilter(top_actions, top_k=5)
+        recommendations = [filtered_contents[action] for action in top_actions]
+
+        # JSON 직렬화 가능한 데이터로 변환
+        for content in recommendations:
+            if isinstance(content.get("embedding"), np.ndarray):
+                content["embedding"] = content["embedding"].tolist()
+
+        return jsonify(recommendations)
+
+    elif mode == 'category_contents':
+        categorized_contents = defaultdict(list)
+        for content in filtered_contents:
+            if isinstance(content.get("embedding"), np.ndarray):
+                content["embedding"] = content["embedding"].tolist()
+            categorized_contents[content["category"]].append(content)
+
+        return jsonify(categorized_contents)
+
+    # 기본 렌더링 요청 처리
+    embeddings = [content["embedding"] for content in filtered_contents]
     top_actions = agent.act(embeddings)
     top_actions = agent.getfilter(top_actions, top_k=5)
-    recommendations = [contents[action] for action in top_actions]
+    recommendations = [filtered_contents[action] for action in top_actions]
 
-    # 템플릿 렌더링
-    return render_template('index.html', recommendations=recommendations)
+    categorized_contents = defaultdict(list)
+    for content in filtered_contents:
+        categorized_contents[content["category"]].append(content)
+
+    return render_template(
+        'index.html',
+        recommendations=recommendations,
+        categorized_contents=categorized_contents,
+        selected_category=selected_category
+    )
+
 
 
 @app.route('/feedback', methods=['POST'])
