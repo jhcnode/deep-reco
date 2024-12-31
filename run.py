@@ -432,7 +432,10 @@ async def fetch_google_news_contents():
     
 async def update_contents():
     global contents, id_to_index
-
+    
+    if(contents is not None):
+        return
+    
     # 기존 콘텐츠 저장
     old_contents = contents or []
     old_id_map = {content["title"]: content["id"] for content in old_contents}
@@ -647,7 +650,7 @@ def index():
     categorized_contents = defaultdict(list)
     for content in filtered_contents:
         categorized_contents[content["category"]].append(content)
-
+    
     return render_template(
         'index.html',
         recommendations=recommendations,
