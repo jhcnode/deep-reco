@@ -102,6 +102,7 @@ async def fetch_clien_contents():
                         "title": title.strip(),
                         "category": category,
                         "link": f"https://www.clien.net{link}" if link else None,
+                        "thumbnail_url": None  # 썸네일 없음
                     })
                 except Exception as e:
                     print(f"게시글 추출 중 오류: {e}")
@@ -146,6 +147,7 @@ async def fetch_inven_contents():
                         "title": title,
                         "category": category,
                         "link": link if link else None,
+                        "thumbnail_url": None  # 썸네일 없음
                     })
                 except Exception as e:
                     print(f"게시글 추출 중 오류: {e}")
@@ -165,12 +167,13 @@ async def fetch_twitch_contents():
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True) 
+            browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
             await page.goto(url, timeout=60000)
 
-            await page.wait_for_selector('a[data-a-target="preview-card-channel-link"]', timeout=15000)
-            cards = await page.query_selector_all('a[data-a-target="preview-card-channel-link"]')
+            # 페이지 로딩 후, 모든 카드가 로드될 때까지 기다림
+            await page.wait_for_selector('a[data-a-target="preview-card-image-link"]', timeout=30000)
+            cards = await page.query_selector_all('a[data-a-target="preview-card-image-link"]')
 
             if not cards:
                 print("데이터를 찾지 못했습니다. 페이지 구조를 다시 확인하세요.")
@@ -178,23 +181,41 @@ async def fetch_twitch_contents():
 
             contents = []
             for i, card in enumerate(cards):
-                aria_label = await card.get_attribute('aria-label')
-                title_elem = await card.query_selector('h3')
+                # 썸네일 이미지 추출
+                thumbnail_elem = await card.query_selector('img.tw-image')
+                thumbnail_url = await thumbnail_elem.get_attribute('src') if thumbnail_elem else None
+
+                # 방송 제목과 채널명 추출
+                alt_text = await thumbnail_elem.get_attribute('alt') if thumbnail_elem else None
+                game_title, channel_name = None, None
+                if alt_text:
+                    parts = alt_text.split("님이")
+                    if len(parts) >= 2:
+                        game_title = parts[1]  # 게임 제목
+                        channel_name = parts[0]  # 채널 이름
+
+                # 방송 상태 (생방송) 추출
+                status_elem = await card.query_selector('div.ScChannelStatusTextIndicator-sc-qtgrnb-0 p')
+                status = await status_elem.inner_text() if status_elem else "Offline"
+
+                # 시청자 수 추출
+                viewers_elem = await card.query_selector('div.ScMediaCardStatWrapper-sc-anph5i-0')
+                viewers = await viewers_elem.inner_text() if viewers_elem else "0"
+
+                # 방송 링크 추출
                 link = await card.get_attribute('href')
-                viewer_count = await card.query_selector('p[data-a-target="preview-card-channel-link"]')
 
-                game_title = await title_elem.get_attribute('title') if title_elem else None
-                channel_name = aria_label.split(' ')[0] if aria_label else None
-                viewers = await viewer_count.inner_text() if viewer_count else "0"
-
-                if game_title and channel_name:
+                # 정확한 데이터만 리스트에 추가
+                if game_title and channel_name and thumbnail_url:
                     contents.append({
                         "id": start_id + i,
                         "channel": channel_name.strip(),
                         "title": game_title.strip(),
                         "viewers": viewers,
                         "category": category,
-                        "link": f"https://www.twitch.tv{link}" if link else None
+                        "link": f"https://www.twitch.tv{link}" if link else None,
+                        "thumbnail_url": thumbnail_url,  # 썸네일 URL 추가
+                        "status": status,  # 방송 상태 추가
                     })
 
             await browser.close()
@@ -204,11 +225,13 @@ async def fetch_twitch_contents():
         print(f"{category} - Error: {e}")
         return []
 
+
+
 async def fetch_youtube_contents():
     url = "https://www.youtube.com/feed/trending?gl=KR&hl=ko"
-    selector = "a#video-title"
-    category = "Streaming"
+    selector = "ytd-video-renderer"
     base_url = "https://www.youtube.com"
+    category = "Streaming"
     contents = []
 
     try:
@@ -217,28 +240,77 @@ async def fetch_youtube_contents():
             page = await browser.new_page()
             await page.goto(url, timeout=60000)
 
+            # 첫 번째 비디오 요소가 로드될 때까지 기다림
             await page.wait_for_selector(selector)
 
+            # 스크롤을 내려 모든 콘텐츠 로드
+            prev_height = 0
+            retries = 0
+            while retries < 15:  # 최대 15회 시도
+                curr_height = await page.evaluate("document.documentElement.scrollHeight")
+                if curr_height == prev_height:
+                    retries += 1
+                else:
+                    retries = 0
+                prev_height = curr_height
+                await page.evaluate("window.scrollBy(0, 1000)")
+                await page.wait_for_timeout(1000)  # 대기 시간 증가로 동적 콘텐츠 로드 보장
+
+            # 모든 비디오 요소 가져오기
             items = await page.query_selector_all(selector)
+
             for i, item in enumerate(items):
-                title = await item.get_attribute("title") or await item.inner_text().strip()
-                link = await item.get_attribute("href")
+                try:
+                    # 제목과 링크 추출
+                    title_elem = await item.query_selector("a#video-title")
+                    title = await title_elem.get_attribute("title") if title_elem else "No Title"
+                    link = await title_elem.get_attribute("href") if title_elem else None
 
-                if link and not link.startswith("http"):
-                    link = f"{base_url}{link}"
+                    # 썸네일 URL 추출
+                    thumbnail_elem = await item.query_selector(
+                        "ytd-thumbnail img, a#thumbnail img, yt-image img, ytd-thumbnail yt-image img, a#thumbnail yt-image img"
+                    )
+                    thumbnail_url = None
+                    if thumbnail_elem:
+                        thumbnail_url = await thumbnail_elem.get_attribute("src")
+                        # 일부 동영상에서 썸네일 URL이 data-src로 제공될 수 있으므로 이를 처리
+                        if not thumbnail_url or thumbnail_url.startswith("data:"):
+                            thumbnail_url = await thumbnail_elem.get_attribute("data-thumb")
 
-                if title and link:
-                    contents.append({
-                        "id": 201 + i,
-                        "title": title,
-                        "category": category,
-                        "link": link
-                    })
+                    # 채널 이름 추출
+                    channel_elem = await item.query_selector("ytd-channel-name a")
+                    channel_name = await channel_elem.inner_text() if channel_elem else "Unknown Channel"
+
+                    # 조회수 추출
+                    view_count_elem = await item.query_selector("span.inline-metadata-item")
+                    view_count = await view_count_elem.inner_text() if view_count_elem else "Unknown Views"
+
+                    # 비디오 링크가 상대 경로라면 절대 경로로 변환
+                    if link and not link.startswith("http"):
+                        link = f"{base_url}{link}"
+
+                    # 콘텐츠 저장
+                    if title and link:
+                        contents.append({
+                            "id": 201 + i,
+                            "title": title,
+                            "category": category,
+                            "link": link,
+                            "thumbnail_url": thumbnail_url,
+                            "channel_name": channel_name,
+                            "view_count": view_count
+                        })
+                except Exception as e:
+                    print(f"Error processing item {i}: {e}")
 
             await browser.close()
+
     except Exception as e:
-        print(f"Error fetching YouTube content: {e}")
+        print(f"Error while fetching trending videos: {e}")
+
     return contents
+
+
 
 
 async def fetch_naver_news_contents():
@@ -254,6 +326,8 @@ async def fetch_naver_news_contents():
         return []
 
     html_content = response.text
+
+    # Pattern to match article links and titles
     pattern = re.compile(r'<a href="(https://n\.news\.naver\.com/article/[^\"]+)"[^>]*class="list_title[^>]*">([^<]+)</a>', re.S)
     matches = pattern.findall(html_content)
 
@@ -266,12 +340,23 @@ async def fetch_naver_news_contents():
         link, title = match
         title = title.strip()
         link = link.strip()
+
+        # Fetch the thumbnail for the article by matching the img tag's src
+        thumbnail_pattern = re.compile(
+            r'<img src="(https://mimgnews\.pstatic\.net/[^"]+)"[^>]*width="70" height="70"',
+            re.S
+        )
+        thumbnail_match = thumbnail_pattern.search(html_content)
+
+        thumbnail_url = None#thumbnail_match.group(1) if thumbnail_match else None
+
         if title and link:
             contents.append({
                 "id": start_id + i,
                 "title": title,
                 "category": category,
-                "link": link
+                "link": link,
+                "thumbnail_url": thumbnail_url  # Add thumbnail URL to the result
             })
 
     return contents
@@ -298,13 +383,16 @@ async def fetch_google_news_contents():
 
                 if link and link.startswith("./"):
                     link = f"{base_url}{link[1:]}"
-
+                
+                thumbnail_url=None
+                
                 if title and link:
                     contents.append({
                         "id": i + 1,
                         "title": title.strip(),
                         "category": category,
-                        "link": link
+                        "link": link,
+                        "thumbnail_url": thumbnail_url  # Add thumbnail URL to the result
                     })
 
             await browser.close()
@@ -358,7 +446,8 @@ async def update_contents():
         fetch_naver_news_contents(),
         fetch_google_news_contents()
     )
-
+    print(new_contents)
+    
     # 중복 제거 및 ID 유지
     combined_contents = []
     unique_titles = set()

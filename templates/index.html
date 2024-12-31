@@ -41,6 +41,13 @@
         .category-filter {
             margin-bottom: 20px;
         }
+        img {
+            max-width: 300px;
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
     </style>
     <script>
     // 추천 콘텐츠 섹션 업데이트
@@ -59,6 +66,8 @@
                                 <h3 style="margin: 0 0 10px;">${content.title}</h3>
                                 <p style="margin: 5px 0;">카테고리: ${content.category}</p>
                                 <p style="margin: 5px 0;"><a href="${content.link}" target="_blank" style="color: #007BFF; text-decoration: none;">링크로 이동</a></p>
+                                <!-- 썸네일 이미지가 있을 경우 -->
+                                ${content.thumbnail_url ? `<div><img src="${content.thumbnail_url}" alt="${content.title}"></div>` : ''}
                                 <div class="feedback-buttons">
                                     <label style="margin-right: 10px;">
                                         <input type="radio" name="${content.id}" value="1" required> 좋아요
@@ -77,7 +86,6 @@
                 `;
             });
     }
-
 
     // 카테고리별 콘텐츠 섹션 업데이트
     function updateCategoryContents() {
@@ -128,6 +136,12 @@
                 <h3>{{ content.title }}</h3>
                 <p>카테고리: {{ content.category }}</p>
                 <p><a href="{{ content.link }}" target="_blank">링크로 이동</a></p>
+                <!-- 썸네일 이미지가 있을 경우 -->
+                {% if content.thumbnail_url %}
+                <div>
+                    <img src="{{ content.thumbnail_url }}" alt="{{ content.title }}">
+                </div>
+                {% endif %}
                 <div class="feedback-buttons">
                     <label>
                         <input type="radio" name="{{ content.id }}" value="1" required> 좋아요
@@ -144,7 +158,6 @@
             <button type="submit">피드백 제출</button>
         </form>
     </div>
-
 
     <h1>카테고리별 추천 콘텐츠</h1>
     <!-- 카테고리별 콘텐츠 필터 -->
