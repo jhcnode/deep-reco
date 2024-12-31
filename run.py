@@ -598,34 +598,32 @@ state_dim = 384
 action_dim = 2000
 agent = DQNAgent(state_dim, action_dim)
 
-from flask import jsonify
-import numpy as np
 
 @app.route('/')
 def index():
     global contents
 
-    # 사용자가 선택한 카테고리를 GET 파라미터로 받음
-    selected_category = request.args.get('category', 'all')  # 기본값은 'all'
+    selected_category = request.args.get('category', 'all')
+    search_query = request.args.get('search_query', '').lower()
     mode = request.args.get('mode')  # AJAX 요청 모드: 'recommendations' or 'category_contents'
 
-    # 콘텐츠 업데이트 (비동기)
     asyncio.run(update_contents())
 
-    # 콘텐츠 필터링
     if selected_category != 'all':
         filtered_contents = [content for content in contents if content["category"] == selected_category]
     else:
         filtered_contents = contents
 
-    # AJAX 요청 처리
+    # 검색 텍스트에 따라 필터링
+    if search_query:
+        filtered_contents = [content for content in filtered_contents if search_query in content["title"].lower()]
+
     if mode == 'recommendations':
         embeddings = [content["embedding"] for content in filtered_contents]
         top_actions = agent.act(embeddings)
         top_actions = agent.getfilter(top_actions, top_k=5)
         recommendations = [filtered_contents[action] for action in top_actions]
 
-        # JSON 직렬화 가능한 데이터로 변환
         for content in recommendations:
             if isinstance(content.get("embedding"), np.ndarray):
                 content["embedding"] = content["embedding"].tolist()
@@ -650,14 +648,14 @@ def index():
     categorized_contents = defaultdict(list)
     for content in filtered_contents:
         categorized_contents[content["category"]].append(content)
-    
+
     return render_template(
         'index.html',
         recommendations=recommendations,
         categorized_contents=categorized_contents,
-        selected_category=selected_category
+        selected_category=selected_category,
+        search_query=search_query
     )
-
 
 
 @app.route('/feedback', methods=['POST'])

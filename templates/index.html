@@ -48,79 +48,116 @@
             border-radius: 8px;
             margin-top: 10px;
         }
+        /* 스타일 추가 */
+        .category-section {
+            margin-top: 30px;
+        }
+        .category-title {
+            font-size: 22px;
+            color: #007BFF;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #007BFF;
+            padding-bottom: 5px;
+        }
+        .category-content {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .category-item {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            width: calc(33.33% - 10px); /* 3열 배치 */
+            box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .category-item h4 {
+            font-size: 18px;
+            color: #333;
+            margin: 0 0 10px;
+        }
+        .category-item a {
+            text-decoration: none;
+            color: #007BFF;
+        }
+        .category-item a:hover {
+            text-decoration: underline;
+        }
     </style>
     <script>
-    // 추천 콘텐츠 섹션 업데이트
     function updateRecommendations() {
         const selectedCategory = document.getElementById('recommendation-category').value;
         fetch(`/?category=${selectedCategory}&mode=recommendations`, {
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         })
-            .then(response => response.json())
-            .then(data => {
-                const section = document.getElementById('recommendation-section');
-                section.innerHTML = `
-                    <form action="/feedback" method="POST">
-                        ${data.map(content => `
-                            <div class="content" style="margin-bottom: 20px; padding: 15px; border: 1px solid #ccc; border-radius: 8px; box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1); background-color: #fff;">
-                                <h3 style="margin: 0 0 10px;">${content.title}</h3>
-                                <p style="margin: 5px 0;">카테고리: ${content.category}</p>
-                                <p style="margin: 5px 0;"><a href="${content.link}" target="_blank" style="color: #007BFF; text-decoration: none;">링크로 이동</a></p>
-                                <!-- 썸네일 이미지가 있을 경우 -->
-                                ${content.thumbnail_url ? `<div><img src="${content.thumbnail_url}" alt="${content.title}"></div>` : ''}
-                                <div class="feedback-buttons">
-                                    <label style="margin-right: 10px;">
-                                        <input type="radio" name="${content.id}" value="1" required> 좋아요
-                                    </label>
-                                    <label style="margin-right: 10px;">
-                                        <input type="radio" name="${content.id}" value="-1"> 싫어요
-                                    </label>
-                                    <label>
-                                        <input type="radio" name="${content.id}" value="0"> 무반응
-                                    </label>
-                                </div>
+        .then(response => response.json())
+        .then(data => {
+            const section = document.getElementById('recommendation-section');
+            section.innerHTML = `
+                <form action="/feedback" method="POST">
+                    ${data.map(content => `
+                        <div class="content">
+                            <h3>${content.title}</h3>
+                            <p>카테고리: ${content.category}</p>
+                            <p><a href="${content.link}" target="_blank">링크로 이동</a></p>
+                            ${content.thumbnail_url ? `<div><img src="${content.thumbnail_url}" alt="${content.title}"></div>` : ''}
+                            <div class="feedback-buttons">
+                                <label>
+                                    <input type="radio" name="${content.id}" value="1" required> 좋아요
+                                </label>
+                                <label>
+                                    <input type="radio" name="${content.id}" value="-1"> 싫어요
+                                </label>
+                                <label>
+                                    <input type="radio" name="${content.id}" value="0"> 무반응
+                                </label>
                             </div>
-                        `).join('')}
-                        <button type="submit" style="padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px;">피드백 제출</button>
-                    </form>
-                `;
-            });
+                        </div>
+                    `).join('')}
+                    <button type="submit">피드백 제출</button>
+                </form>
+            `;
+        });
     }
 
-    // 카테고리별 콘텐츠 섹션 업데이트
     function updateCategoryContents() {
         const selectedCategory = document.getElementById('content-category').value;
-        fetch(`/?category=${selectedCategory}&mode=category_contents`, {
+        const searchQuery = document.getElementById('search-bar').value.trim().toLowerCase();
+        fetch(`/?category=${selectedCategory}&search_query=${encodeURIComponent(searchQuery)}&mode=category_contents`, {
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         })
-            .then(response => response.json())
-            .then(data => {
-                const section = document.getElementById('category-section');
-                section.innerHTML = Object.entries(data).map(([category, items]) => `
-                    <div style="margin-bottom: 30px;">
-                        <h2 style="font-size: 22px; color: #007BFF; margin-bottom: 15px; border-bottom: 2px solid #007BFF; padding-bottom: 5px;">${category}</h2>
-                        <ul style="list-style-type: none; padding: 0;">
-                            ${items.map(item => `
-                                <li style="margin-bottom: 10px;">
-                                    <a href="${item.link}" target="_blank" style="text-decoration: none; font-size: 18px; color: #333; font-weight: bold;">
-                                        ${item.title}
-                                    </a>
-                                </li>
-                            `).join('')}
-                        </ul>
+        .then(response => response.json())
+        .then(data => {
+            const section = document.getElementById('category-section');
+            section.innerHTML = Object.entries(data).map(([category, items]) => `
+                <div class="category-section">
+                    <h2 class="category-title">${category}</h2>
+                    <div class="category-content">
+                        ${items.map(item => `
+                            <div class="category-item">
+                                <h4>${item.title}</h4>
+                                <p><a href="${item.link}" target="_blank">자세히 보기</a></p>
+                            </div>
+                        `).join('')}
                     </div>
-                `).join('');
-            });
+                </div>
+            `).join('');
+        });
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        const searchBar = document.getElementById('search-bar');
+        searchBar.addEventListener('input', updateCategoryContents);
+    });
     </script>
 </head>
 <body>
     <h1>도파민 모아 추천 콘텐츠</h1>
 
-    <!-- 추천 콘텐츠 필터 -->
     <div class="category-filter">
-        <label for="recommendation-category" style="font-weight: bold; font-size: 18px; margin-right: 10px;">추천 콘텐츠 카테고리:</label>
-        <select name="recommendation-category" id="recommendation-category" onchange="updateRecommendations()" style="padding: 8px 12px; font-size: 16px; border-radius: 5px; border: 1px solid #ccc;">
+        <label for="recommendation-category">추천 콘텐츠 카테고리:</label>
+        <select id="recommendation-category" onchange="updateRecommendations()">
             <option value="all">All</option>
             <option value="Community">Community</option>
             <option value="Streaming">Streaming</option>
@@ -128,7 +165,6 @@
         </select>
     </div>
 
-    <!-- 추천 콘텐츠 섹션 -->
     <div id="recommendation-section">
         <form action="/feedback" method="POST">
             {% for content in recommendations %}
@@ -136,7 +172,6 @@
                 <h3>{{ content.title }}</h3>
                 <p>카테고리: {{ content.category }}</p>
                 <p><a href="{{ content.link }}" target="_blank">링크로 이동</a></p>
-                <!-- 썸네일 이미지가 있을 경우 -->
                 {% if content.thumbnail_url %}
                 <div>
                     <img src="{{ content.thumbnail_url }}" alt="{{ content.title }}">
@@ -160,10 +195,9 @@
     </div>
 
     <h1>카테고리별 추천 콘텐츠</h1>
-    <!-- 카테고리별 콘텐츠 필터 -->
     <div class="category-filter">
-        <label for="content-category" style="font-weight: bold; font-size: 18px; margin-right: 10px;">카테고리별 콘텐츠:</label>
-        <select name="content-category" id="content-category" onchange="updateCategoryContents()" style="padding: 8px 12px; font-size: 16px; border-radius: 5px; border: 1px solid #ccc;">
+        <input type="text" id="search-bar" placeholder="검색어를 입력하세요">
+        <select id="content-category" onchange="updateCategoryContents()">
             <option value="all">All</option>
             <option value="Community">Community</option>
             <option value="Streaming">Streaming</option>
@@ -171,20 +205,18 @@
         </select>
     </div>
 
-    <!-- 카테고리별 콘텐츠 섹션 -->
-    <div id="category-section" style="margin-top: 20px;">
+    <div id="category-section">
         {% for category, items in categorized_contents.items() %}
-        <div style="margin-bottom: 30px;">
-            <h2 style="font-size: 22px; color: #007BFF; margin-bottom: 15px; border-bottom: 2px solid #007BFF; padding-bottom: 5px;">{{ category }}</h2>
-            <ul style="list-style-type: none; padding: 0;">
+        <div class="category-section">
+            <h2 class="category-title">{{ category }}</h2>
+            <div class="category-content">
                 {% for item in items %}
-                <li style="margin-bottom: 10px;">
-                    <a href="{{ item.link }}" style="text-decoration: none; font-size: 18px; color: #333; font-weight: bold;" target="_blank">
-                        {{ item.title }}
-                    </a>
-                </li>
+                <div class="category-item">
+                    <h4>{{ item.title }}</h4>
+                    <p><a href="{{ item.link }}" target="_blank">자세히 보기</a></p>
+                </div>
                 {% endfor %}
-            </ul>
+            </div>
         </div>
         {% endfor %}
     </div>
