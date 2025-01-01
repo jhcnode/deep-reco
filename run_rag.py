@@ -30,12 +30,6 @@ import shutil
 # Flask 앱 생성
 app = Flask(__name__)
 
-# # 임베딩 모델 준비
-# MODEL_NAME = 'sentence-transformers/all-MiniLM-L6-v2'  # Sentence-BERT 모델 사용
-# tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# model = AutoModel.from_pretrained(MODEL_NAME).to(device)
-
 # RAG 모델 준비
 RAG_MODEL_NAME = "facebook/rag-token-nq"
 rag_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
