@@ -65,12 +65,6 @@ if not required_columns.issubset(dataset.column_names):
 if not os.path.exists(INDEX_PATH):
     print("Index not found. Initializing new index...")
     if len(dataset) > 0:
-        # def ensure_embeddings(example):
-        #     if not isinstance(example["embeddings"], list) or len(example["embeddings"]) == 0:
-        #         example["embeddings"] = [0.0] * 512  # 기본 128차원 벡터
-        #     return example
-
-        #dataset = dataset.map(ensure_embeddings, batched=False)
         dataset.add_faiss_index("embeddings")
         dataset.get_index("embeddings").save(INDEX_PATH)
         dataset.cleanup_cache_files()
