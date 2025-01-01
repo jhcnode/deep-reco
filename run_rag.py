@@ -83,16 +83,16 @@ else:
         dataset.cleanup_cache_files()
 
 # RAG 모델 초기화
-rag_tokenizer = RagTokenizer.from_pretrained(MODEL_SAVE_PATH)
+rag_tokenizer = RagTokenizer.from_pretrained(MODEL_SAVE_PATH) #or RAG_MODEL_NAME
 rag_retriever = RagRetriever.from_pretrained(
-    MODEL_SAVE_PATH,
+    MODEL_SAVE_PATH, #or RAG_MODEL_NAME
     index_name="custom",
     passages_path=DATASET_PATH,
     index_path=INDEX_PATH,
     use_dummy_dataset=False,
     use_gpu=torch.cuda.is_available()
 )
-rag_model = RagSequenceForGeneration.from_pretrained(MODEL_SAVE_PATH).to(rag_device)
+rag_model = RagSequenceForGeneration.from_pretrained(MODEL_SAVE_PATH).to(rag_device) #or RAG_MODEL_NAME
 
 # 모델 저장
 if not os.path.exists(MODEL_SAVE_PATH):
