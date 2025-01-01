@@ -32,16 +32,6 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = AutoModel.from_pretrained(MODEL_NAME).to(device)
 
-# 드라이버 재사용 설정
-driver_service = Service(ChromeDriverManager().install())
-driver_options = Options()
-driver_options.add_argument("--headless")
-driver_options.add_argument("--disable-gpu")
-driver_options.add_argument("--disable-dev-shm-usage")
-driver_options.add_argument('--disable-extensions')  # 확장 프로그램 비활성화
-driver_options.add_argument('--no-sandbox')  # 리소스 격리 비활성화
-driver_options.add_experimental_option("excludeSwitches", ["enable-logging"])
-
 # Dataset 클래스 정의
 class TextDataset(Dataset):
     def __init__(self, texts):
