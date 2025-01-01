@@ -21,7 +21,7 @@ from playwright.sync_api import sync_playwright
 from playwright.async_api import async_playwright
 import asyncio
 from collections import defaultdict
-from transformers import RagTokenizer, RagRetriever, RagSequenceForGeneration
+from transformers import RagTokenizer, RagSequenceForGeneration
 from datasets import Dataset as RAGDataset, load_from_disk
 import os
 from sklearn.metrics.pairwise import cosine_similarity
@@ -84,14 +84,6 @@ else:
 
 # RAG 모델 초기화
 rag_tokenizer = RagTokenizer.from_pretrained(MODEL_SAVE_PATH) #or RAG_MODEL_NAME
-rag_retriever = RagRetriever.from_pretrained(
-    MODEL_SAVE_PATH, #or RAG_MODEL_NAME
-    index_name="custom",
-    passages_path=DATASET_PATH,
-    index_path=INDEX_PATH,
-    use_dummy_dataset=False,
-    use_gpu=torch.cuda.is_available()
-)
 rag_model = RagSequenceForGeneration.from_pretrained(MODEL_SAVE_PATH).to(rag_device) #or RAG_MODEL_NAME
 
 # 모델 저장
@@ -99,7 +91,6 @@ if not os.path.exists(MODEL_SAVE_PATH):
     os.makedirs(MODEL_SAVE_PATH)
     rag_model.save_pretrained(MODEL_SAVE_PATH)
     rag_tokenizer.save_pretrained(MODEL_SAVE_PATH)
-    rag_retriever.save_pretrained(MODEL_SAVE_PATH)
 
 # Dataset 클래스 정의
 class TextDataset(Dataset):
@@ -619,7 +610,7 @@ def index():
 # 피드백 라우트 정의
 @app.route('/feedback', methods=['POST'])
 def feedback():
-    global contents, id_to_index, rag_retriever, user_history, dataset
+    global contents, id_to_index, user_history, dataset
 
     feedback_data = request.form
 
