@@ -532,49 +532,6 @@ def filter_top_similarities(query_embedding, contents, top_k=5):
     similarities = cosine_similarity([query_embedding], content_embeddings)[0]
     top_indices = similarities.argsort()[-top_k:][::-1]
     return [contents[i] for i in top_indices]
-# 배치 분할 함수
-def split_query_into_batches(titles, tokenizer, max_tokens=512, batch_size=32):
-    """
-    제목 리스트를 받아서 최대 토큰 수를 초과하지 않도록 여러 배치로 분할합니다.
-    배치 크기를 설정할 수 있으며, 배치 크기가 설정되지 않으면 최대한 많은 제목을 포함시킵니다.
-    
-    :param titles: 제목 리스트
-    :param tokenizer: 토크나이저 객체
-    :param max_tokens: 배치당 최대 토큰 수
-    :param batch_size: 배치 크기 (기본값: 32)
-    :return: 배치 리스트
-    """
-    batches = []
-    current_batch = []
-    current_length = 0
-
-    for title in titles:
-        try:
-            tokens = tokenizer.tokenize(title)
-            title_length = len(tokens)
-        except Exception as e:
-            print(f"Error tokenizing title '{title}': {e}")
-            continue
-
-        if batch_size:
-            if len(current_batch) >= batch_size:
-                batches.append(" ".join(current_batch))
-                current_batch = []
-                current_length = 0
-
-        if current_length + title_length > max_tokens:
-            if current_batch:
-                batches.append(" ".join(current_batch))
-                current_batch = []
-                current_length = 0
-
-        current_batch.append(title)
-        current_length += title_length
-
-    if current_batch:
-        batches.append(" ".join(current_batch))
-
-    return batches
 
 # Flask 라우트 정의
 @app.route('/')
