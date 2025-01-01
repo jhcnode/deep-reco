@@ -1,14 +1,7 @@
 from flask import Flask, render_template, request, redirect, jsonify,url_for, session as _sess
 from transformers import AutoTokenizer, AutoModel
-from bs4 import BeautifulSoup
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from playwright.sync_api import sync_playwright
-from pytrends.request import TrendReq
 import torch
 import torch.nn as nn
 import torch.optim as optim
