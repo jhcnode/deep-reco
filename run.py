@@ -1,7 +1,6 @@
 from flask import Flask, render_template, request, redirect, jsonify,url_for
 from transformers import AutoTokenizer, AutoModel
 import requests
-from webdriver_manager.chrome import ChromeDriverManager
 from playwright.sync_api import sync_playwright
 import torch
 import torch.nn as nn
