@@ -465,6 +465,7 @@ def index():
     # 콘텐츠 업데이트 비동기 실행
     asyncio.run(update_contents())
 
+
     selected_category = request.args.get('category', 'all')
     search_query = request.args.get('search_query', '').lower()
     mode = request.args.get('mode')  # AJAX 요청 모드
@@ -481,50 +482,49 @@ def index():
     if search_query:
         filtered_contents = [content for content in filtered_contents if search_query in content["title"].lower()]
 
-    final_recommendations = filtered_contents
 
+    # 사용자 히스토리를 기반으로 쿼리 생성
+    queries = user_history['liked'] if user_history['liked'] else [content["title"] for content in contents[:5]]
+    all_recommendations = {}
+
+    # TextDataset과 DataLoader를 사용한 배치 처리
+    query_dataset = TextDataset(queries)
+    query_dataloader = DataLoader(query_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+
+    for query_batch in query_dataloader:
+        try:
+            # 질문 인코더 서브 토크나이저로 인코딩 및 임베딩 생성
+            query_embeddings = embedding_model.encode(list(query_batch), convert_to_tensor=False)
+
+            # 각 쿼리 임베딩에 대해 유사도 기반 추천 필터링
+            for query_embedding in query_embeddings:
+                batch_recommendations = filter_top_similarities(query_embedding, filtered_contents, top_k=5)
+                for recommendation in batch_recommendations:
+                    rec_id = recommendation["id"]
+                    similarity_score = cosine_similarity([query_embedding], [recommendation["embeddings"]])[0][0]
+                    if rec_id in all_recommendations:
+                        all_recommendations[rec_id]["score"] += similarity_score
+                    else:
+                        all_recommendations[rec_id] = {"content": recommendation, "score": similarity_score}
+        except Exception as e:
+            print(f"Error processing query batch: {e}")
+            continue
+        
+    # 유사도 점수 기준으로 정렬
+    sorted_recommendations = sorted(all_recommendations.values(), key=lambda x: x["score"], reverse=True)
+    final_recommendations = [rec["content"] for rec in sorted_recommendations[:5]]
+    
     if mode == 'recommendations':
-        # 사용자 히스토리를 기반으로 쿼리 생성
-        queries = user_history['liked'] if user_history['liked'] else [content["title"] for content in contents[:5]]
-        all_recommendations = {}
-
-        # TextDataset과 DataLoader를 사용한 배치 처리
-        query_dataset = TextDataset(queries)
-        query_dataloader = DataLoader(query_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
-
-        for query_batch in query_dataloader:
-            try:
-                # 질문 인코더 서브 토크나이저로 인코딩 및 임베딩 생성
-                query_embeddings = embedding_model.encode(list(query_batch), convert_to_tensor=False)
-
-                # 각 쿼리 임베딩에 대해 유사도 기반 추천 필터링
-                for query_embedding in query_embeddings:
-                    batch_recommendations = filter_top_similarities(query_embedding, filtered_contents, top_k=5)
-                    for recommendation in batch_recommendations:
-                        rec_id = recommendation["id"]
-                        similarity_score = cosine_similarity([query_embedding], [recommendation["embeddings"]])[0][0]
-                        if rec_id in all_recommendations:
-                            all_recommendations[rec_id]["score"] += similarity_score
-                        else:
-                            all_recommendations[rec_id] = {"content": recommendation, "score": similarity_score}
-            except Exception as e:
-                print(f"Error processing query batch: {e}")
-                continue
-
-        # 유사도 점수 기준으로 정렬
-        sorted_recommendations = sorted(all_recommendations.values(), key=lambda x: x["score"], reverse=True)
-        final_recommendations = [rec["content"] for rec in sorted_recommendations[:5]]
         return jsonify(final_recommendations)
-
     elif mode == 'category_contents':
         categorized_contents = defaultdict(list)
         for content in filtered_contents:
             if isinstance(content.get("embeddings"), np.ndarray):
                 content["embeddings"] = content["embeddings"].tolist()
-            categorized_contents[content["category"].append(content)]
+            categorized_contents[content["category"]].append(content)
 
         return jsonify(categorized_contents)
-
+        
     # 일반 페이지 렌더링
     categorized_contents = defaultdict(list)
     for content in filtered_contents:
