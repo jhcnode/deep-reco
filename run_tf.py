@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, jsonify,url_for, session as _sess
+from flask import Flask, render_template, request, redirect, jsonify,url_for, session as _sess, send_from_directory
 import requests
 from playwright.sync_api import sync_playwright
 import torch
@@ -17,6 +17,11 @@ from sentence_transformers import SentenceTransformer
 import os
 from sklearn.metrics.pairwise import cosine_similarity
 import shutil
+import json
+import hashlib
+import aiohttp
+import aiofiles
+from pathlib import Path
 
 # Flask 앱 생성
 app = Flask(__name__)
@@ -381,6 +386,106 @@ async def fetch_google_news_contents():
         print(f"{category} - Error: {e}")
 
     return contents
+
+
+
+@app.route('/images/<path:filename>')
+def serve_image(filename):
+    """로컬에 저장된 이미지를 제공"""
+    cache_dir="D:/deep-reco/cached_images"
+    return send_from_directory(cache_dir, filename)
+
+
+async def fetch_instagram_contents():
+    username = ""
+    password = ""
+    session_file = "session_storage.json"
+    explore_url = "https://www.instagram.com/explore/"
+    cache_dir = "D:/deep-reco/cached_images"
+    os.makedirs(cache_dir,exist_ok=True)
+    contents = []
+    category="SNS"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        storage = None
+
+        # 세션 저장소 불러오기
+        try:
+            with open(session_file, "r") as f:
+                storage = json.load(f)
+                await context.add_cookies(storage)
+                print("세션 데이터 로드 완료.")
+        except FileNotFoundError:
+            print("세션 파일이 없습니다. 새로 로그인합니다.")
+
+        page = await context.new_page()
+
+        # 세션이 없으면 로그인
+        if not storage:
+            login_url = "https://www.instagram.com/accounts/login/"
+            await page.goto(login_url)
+            await page.fill('input[name="username"]', username)
+            await page.fill('input[name="password"]', password)
+            await page.click('button[type="submit"]')
+            await page.wait_for_timeout(5000)  # 로그인 완료 대기
+
+            # 세션 저장
+            storage = await context.cookies()
+            with open(session_file, "w") as f:
+                json.dump(storage, f)
+
+        # 탐색 페이지 이동
+        await page.goto(explore_url)
+        await page.wait_for_selector('div._aagv')  # 콘텐츠 로드 대기
+
+        # 콘텐츠 가져오기
+        items = await page.query_selector_all('a._a6hd')
+        async with aiohttp.ClientSession() as session:
+            for i, item in enumerate(items):
+                try:
+                    link = await item.get_attribute('href')
+                    img_elem = await item.query_selector('img')
+                    thumbnail_url = await img_elem.get_attribute('src') if img_elem else None
+
+                    # 캐싱된 이미지 확인 및 저장
+                    if thumbnail_url:
+                        # 해시값으로 파일 이름 생성
+                        img_hash = hashlib.md5(thumbnail_url.encode()).hexdigest()
+                        cached_file = cache_dir+"/"+f"{img_hash}.jpg"
+
+                        if os.path.exists(cached_file)==False:
+                            # 이미지 다운로드
+                            print(f"다운로드 중: {thumbnail_url}")
+                            async with session.get(thumbnail_url) as response:
+                                if response.status == 200:
+                                    content = await response.read()
+                                    async with aiofiles.open(cached_file, mode="wb") as f:
+                                        await f.write(content)
+
+                        # 제목/캡션 추출
+                        parent_div = await item.query_selector("div._aagu")
+                        if not parent_div:
+                            continue
+                        caption_elem = await parent_div.query_selector("div._aacl")
+                        title = await caption_elem.inner_text() if caption_elem else "No Title {}".format(i+1)
+                        cached_file_name=os.path.basename(cached_file)
+
+                        contents.append({
+                            "id": i + 1,
+                            "title": title,
+                            "link": f"https://www.instagram.com{link}",
+                            "thumbnail_url":  f"/images/{cached_file_name}",
+                            "category":category
+                        })
+                except Exception as e:
+                    print(f"Error processing item {i}: {e}")
+
+        await browser.close()
+
+    return contents
+
     
 async def update_contents():
     global contents, id_to_index
@@ -396,11 +501,13 @@ async def update_contents():
     new_contents = await asyncio.gather(
         fetch_clien_contents(),
         fetch_inven_contents(),
+        fetch_instagram_contents(),
         fetch_twitch_contents(),
         fetch_youtube_contents(),
         fetch_naver_news_contents(),
         fetch_google_news_contents()
     )
+    print(new_contents)
 
     
     # 중복 제거 및 ID 유지
