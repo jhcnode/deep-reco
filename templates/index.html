@@ -138,6 +138,7 @@
                             <div class="category-item">
                                 <h4>${item.title}</h4>
                                 <p><a href="${item.link}" target="_blank">자세히 보기</a></p>
+                                ${item.thumbnail_url ? `<div><img src="${item.thumbnail_url}" alt="${item.title}"></div>` : ''}
                             </div>
                         `).join('')}
                     </div>
@@ -216,6 +217,11 @@
                 <div class="category-item">
                     <h4>{{ item.title }}</h4>
                     <p><a href="{{ item.link }}" target="_blank">자세히 보기</a></p>
+                    {% if item.thumbnail_url %}
+                    <div>
+                        <img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">
+                    </div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
