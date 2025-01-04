@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, jsonify,url_for, session as _sess, send_from_directory
+from flask import Flask, render_template, request, redirect, jsonify,url_for
+from transformers import AutoTokenizer, AutoModel
 import requests
 from playwright.sync_api import sync_playwright
 import torch
@@ -13,25 +14,16 @@ from playwright.sync_api import sync_playwright
 from playwright.async_api import async_playwright
 import asyncio
 from collections import defaultdict
-from sentence_transformers import SentenceTransformer
-import os
-from sklearn.metrics.pairwise import cosine_similarity
-import shutil
-import json
-import hashlib
-import aiohttp
-import aiofiles
-from pathlib import Path
+
 
 # Flask 앱 생성
 app = Flask(__name__)
 
-# 모델 로드
-EMBEDDING_MODEL_NAME = "xlm-r-100langs-bert-base-nli-stsb-mean-tokens"
-embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-if torch.cuda.is_available():
-    embedding_model = embedding_model.to(torch.device("cuda"))
-
+# 임베딩 모델 준비
+MODEL_NAME = 'sentence-transformers/all-MiniLM-L6-v2'  # Sentence-BERT 모델 사용
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = AutoModel.from_pretrained(MODEL_NAME).to(device)
 
 # Dataset 클래스 정의
 class TextDataset(Dataset):
@@ -49,10 +41,16 @@ class TextDataset(Dataset):
 async def embed_texts_parallel(texts, batch_size=16):
     dataset = TextDataset(texts)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
     embeddings = []
+    model.eval()
+
     for batch in dataloader:
-        batch_embeddings = embedding_model.encode(batch, convert_to_tensor=False, batch_size=batch_size, device="cuda" if torch.cuda.is_available() else "cpu")
+        inputs = tokenizer(batch, return_tensors="pt", truncation=True, padding=True, max_length=128).to(device)
+        outputs = model(**inputs)
+        batch_embeddings = outputs.last_hidden_state.mean(dim=1).detach().cpu().numpy()
         embeddings.extend(batch_embeddings)
+
     return embeddings
 
 async def fetch_clien_contents():
@@ -387,185 +385,33 @@ async def fetch_google_news_contents():
 
     return contents
 
+# # 콘텐츠 데이터베이스를 업데이트하는 함수
+# def update_contents():
+#     global contents, id_to_index
+#     old_contents = contents or []
+#     old_id_map = {content["title"]: content["id"] for content in old_contents}
 
+#     # 새로운 콘텐츠 가져오기
+#     new_contents = fetch_naver_news_contents() + fetch_google_news_contents() + \
+#                    fetch_youtube_contents() + fetch_twitch_contents() + \
+#                    fetch_inven_contents() + fetch_clien_contents()
+                   
+                   
+#     random.shuffle(new_contents)
 
-@app.route('/images/<path:filename>')
-def serve_image(filename):
-    """로컬에 저장된 이미지를 제공"""
-    cache_dir="D:/deep-reco/cached_images"
-    return send_from_directory(cache_dir, filename)
+#     # ID 유지: 기존 콘텐츠는 이전 ID 사용, 새 콘텐츠는 새로운 ID 부여
+#     start_id = max(old_id_map.values(), default=0) + 1
+#     for content in new_contents:
+#         if content["title"] in old_id_map:
+#             content["id"] = old_id_map[content["title"]]
+#         else:
+#             content["id"] = start_id
+#             start_id += 1
 
-
-async def fetch_instagram_contents():
-    username = ""
-    password = ""
-    session_file = "session_storage.json"
-    explore_url = "https://www.instagram.com/explore/"
-    cache_dir = "D:/deep-reco/cached_images"
-    os.makedirs(cache_dir, exist_ok=True)
-    contents = []
-    category = "SNS"
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
-        storage = None
-
-        # 세션 저장소 불러오기
-        try:
-            with open(session_file, "r") as f:
-                storage = json.load(f)
-                await context.add_cookies(storage)
-                print("세션 데이터 로드 완료.")
-        except FileNotFoundError:
-            print("세션 파일이 없습니다. 새로 로그인합니다.")
-
-        page = await context.new_page()
-
-        # 세션이 없으면 로그인
-        if not storage:
-            login_url = "https://www.instagram.com/accounts/login/"
-            await page.goto(login_url)
-            await page.fill('input[name="username"]', username)
-            await page.fill('input[name="password"]', password)
-            await page.click('button[type="submit"]')
-            await page.wait_for_timeout(5000)  # 로그인 완료 대기
-
-            # 세션 저장
-            storage = await context.cookies()
-            with open(session_file, "w") as f:
-                json.dump(storage, f)
-
-        # 탐색 페이지 이동
-        await page.goto(explore_url)
-        await page.wait_for_selector('div._aagv')  # 콘텐츠 로드 대기
-
-        # 콘텐츠 가져오기
-        items = await page.query_selector_all('a._a6hd')
-        async with aiohttp.ClientSession() as session:
-            for i, item in enumerate(items):
-                try:
-                    link = await item.get_attribute('href')
-                    img_elem = await item.query_selector('img')
-                    thumbnail_url = await img_elem.get_attribute('src') if img_elem else None
-
-                    # 제목/캡션 추출
-                    parent_div = await item.query_selector("div._aagu")
-                    caption_elem = await parent_div.query_selector("div._aacl") if parent_div else None
-                    alt_text = await img_elem.get_attribute('alt') if img_elem else None
-
-                    # 우선순위: 캡션 > 이미지 alt > 기본 제목
-                    title = await caption_elem.inner_text() if caption_elem else alt_text if alt_text else f"No Title {i+1}"
-
-                    # 캐싱된 이미지 확인 및 저장
-                    if thumbnail_url:
-                        # 해시값으로 파일 이름 생성
-                        img_hash = hashlib.md5(thumbnail_url.encode()).hexdigest()
-                        cached_file = cache_dir + f"/{img_hash}.jpg"
-
-                        if not os.path.exists(cached_file):
-                            print(f"다운로드 중: {thumbnail_url}")
-                            async with session.get(thumbnail_url) as response:
-                                if response.status == 200:
-                                    content = await response.read()
-                                    async with aiofiles.open(cached_file, mode="wb") as f:
-                                        await f.write(content)
-
-                        cached_file_name = os.path.basename(cached_file)
-
-                        contents.append({
-                            "id": i + 1,
-                            "title": title,
-                            "link": f"https://www.instagram.com{link}",
-                            "thumbnail_url": f"/images/{cached_file_name}",
-                            "category": category
-                        })
-                except Exception as e:
-                    print(f"Error processing item {i}: {e}")
-
-        await browser.close()
-
-    return contents
-
-async def fetch_tiktok_contents(scroll=False):
-    url = "https://www.tiktok.com/explore"
-    category = "SNS"
-    contents = []
-    cache_dir = "D:/deep-reco/cached_images"
-    os.makedirs(cache_dir, exist_ok=True)
-
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(url, timeout=60000)
-
-            # 콘텐츠가 로드될 때까지 대기
-            await page.wait_for_selector('div[data-e2e="explore-item"]', timeout=15000)
-
-            if scroll:
-                # 스크롤하여 콘텐츠 로드
-                prev_height = 0
-                retries = 0
-                while retries < 10:  # 최대 10회 시도
-                    curr_height = await page.evaluate("document.documentElement.scrollHeight")
-                    if curr_height == prev_height:
-                        retries += 1
-                    else:
-                        retries = 0
-                    prev_height = curr_height
-                    await page.evaluate("window.scrollBy(0, 1000)")
-                    await page.wait_for_timeout(1000)
-
-            # 모든 콘텐츠 요소 가져오기
-            items = await page.query_selector_all('div[data-e2e="explore-item"]')
-
-            async with aiohttp.ClientSession() as session:
-                for i, item in enumerate(items):
-                    try:
-                        # 링크와 제목 추출
-                        link_elem = await item.query_selector('a.css-1g95xhm-AVideoContainer')
-                        link = await link_elem.get_attribute('href') if link_elem else None
-
-                        title_elem = await item.query_selector('img')
-                        title = await title_elem.get_attribute('alt') if title_elem else f"No Title {i+1}"
-
-                        # 썸네일 URL 추출
-                        thumbnail_elem = await item.query_selector('img')
-                        thumbnail_url = await thumbnail_elem.get_attribute('src') if thumbnail_elem else None
-
-                        # 캐싱된 이미지 확인 및 저장
-                        if thumbnail_url:
-                            img_hash = hashlib.md5(thumbnail_url.encode()).hexdigest()
-                            cached_file = cache_dir + f"/{img_hash}.jpg"
-
-                            if not os.path.exists(cached_file):
-                                print(f"다운로드 중: {thumbnail_url}")
-                                async with session.get(thumbnail_url) as response:
-                                    if response.status == 200:
-                                        content = await response.read()
-                                        async with aiofiles.open(cached_file, mode="wb") as f:
-                                            await f.write(content)
-
-                            cached_file_name = os.path.basename(cached_file)
-
-                            contents.append({
-                                "id": i + 1,
-                                "title": title,
-                                "link": link,
-                                "thumbnail_url": f"/images/{cached_file_name}",
-                                "category": category
-                            })
-                    except Exception as e:
-                        print(f"Error processing item {i}: {e}")
-
-            await browser.close()
-
-    except Exception as e:
-        print(f"Error fetching TikTok contents: {e}")
-
-    return contents
-
+#     # 콘텐츠 처리
+#     process_contents(new_contents)
+#     contents = new_contents
+#     id_to_index = {content["id"]: idx for idx, content in enumerate(contents)}
     
 async def update_contents():
     global contents, id_to_index
@@ -581,15 +427,12 @@ async def update_contents():
     new_contents = await asyncio.gather(
         fetch_clien_contents(),
         fetch_inven_contents(),
-        fetch_instagram_contents(),
-        fetch_tiktok_contents(),
         fetch_twitch_contents(),
         fetch_youtube_contents(),
         fetch_naver_news_contents(),
         fetch_google_news_contents()
     )
     print(new_contents)
-
     
     # 중복 제거 및 ID 유지
     combined_contents = []
@@ -625,131 +468,209 @@ async def process_contents(contents):
         return  # contents가 비어 있으면 반환
 
     texts = [content["title"] for content in contents]
-    embeddingss = await embed_texts_parallel(texts)
+    embeddings = await embed_texts_parallel(texts)
 
-    for content, embeddings in zip(contents, embeddingss):
-        content["embeddings"] = embeddings.tolist()
+    for content, embedding in zip(contents, embeddings):
+        content["embedding"] = embedding
+        
+# 강화학습 네트워크 모델 정의
+class QNetwork(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(QNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_dim, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, output_dim)
 
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+
+# 강화학습 모델 (DQN 기반)
+class DQNAgent:
+    def __init__(self, state_dim, action_dim):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.q_network = nn.DataParallel(QNetwork(state_dim, action_dim).to(device))
+        self.target_network = nn.DataParallel(QNetwork(state_dim, action_dim).to(device))
+        self.optimizer = optim.Adam(self.q_network.parameters(), lr=0.001)
+        self.criterion = nn.MSELoss()
+        self.discount_factor = 0.99
+        self.epsilon = 0.1
+        self.memory = []
+        self.batch_size = 32
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+        if len(self.memory) > 1000:
+            self.memory.pop(0)
+
+    def act(self, states):
+        with torch.no_grad():
+            state_tensor = torch.FloatTensor(states).to(device)
+            q_values = self.q_network(state_tensor)
+            # Q 값 기반으로 내림차순 정렬
+            top_actions = torch.argsort(q_values[:, 0], descending=True).tolist()
+            return top_actions
+
+    def getfilter(self,top_actions,top_k=5):
+        global disliked_titles
+        global contents
+        
+        unique_titles = set()
+        filtered_actions = []
+        print(disliked_titles)
+        for action in top_actions:
+            title = contents[action]["title"]
+            # disliked_titles에 포함된 제목은 제외
+            if title not in disliked_titles and title not in unique_titles:
+                unique_titles.add(title)
+                filtered_actions.append(action)
+
+            if len(filtered_actions) == top_k:
+                break
+
+        # 추천이 부족하면 남은 항목에서 추가
+        if len(filtered_actions) < top_k:
+            remaining_candidates = [
+                action for action in range(len(contents))
+                if contents[action]["title"] not in disliked_titles
+                and contents[action]["title"] not in unique_titles
+            ]
+            random.shuffle(remaining_candidates)
+            filtered_actions.extend(remaining_candidates[:top_k - len(filtered_actions)])
+
+        # 최종 추천 결과
+        return filtered_actions[:top_k]
+    
+
+    def replay(self):
+        if len(self.memory) < self.batch_size:
+            return
+        batch = random.sample(self.memory, self.batch_size)
+        states, actions, rewards, next_states, dones = zip(*batch)
+
+        states = torch.FloatTensor(states).to(device)
+        actions = torch.LongTensor(actions).to(device)
+        rewards = torch.FloatTensor(rewards).to(device)
+        next_states = torch.FloatTensor(next_states).to(device)
+        dones = torch.FloatTensor(dones).to(device)
+
+        q_values = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        with torch.no_grad():
+            next_q_values = self.target_network(next_states).max(1)[0]
+            targets = rewards + self.discount_factor * next_q_values * (1 - dones)
+
+        loss = self.criterion(q_values, targets)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        print(f"Replay Loss: {loss.item()}")
+
+    def update_target_network(self):
+        self.target_network.load_state_dict(self.q_network.state_dict())
+
+# 싫어요 제목 목록
+disliked_titles = []
 
 # 시스템 초기화
 contents=None
+state_dim = 384
+action_dim = 2000
+agent = DQNAgent(state_dim, action_dim)
 
-user_history = {'liked': [], 'disliked': []}  # 단일 사용자 환경을 가정
 
-# 유사도 기반 필터링 함수
-def filter_top_similarities(query_embedding, contents, top_k=5):
-    if not contents:
-        return []
-    content_embeddings = np.array([content["embeddings"] for content in contents])
-    similarities = cosine_similarity([query_embedding], content_embeddings)[0]
-    top_indices = similarities.argsort()[-top_k:][::-1]
-    return [contents[i] for i in top_indices]
-
-# Flask 라우트 정의
 @app.route('/')
 def index():
-    global contents, user_history
-
-    # 콘텐츠 업데이트 비동기 실행
-    asyncio.run(update_contents())
-
+    global contents
 
     selected_category = request.args.get('category', 'all')
     search_query = request.args.get('search_query', '').lower()
-    mode = request.args.get('mode')  # AJAX 요청 모드
-    batch_size = 32
+    mode = request.args.get('mode')  # AJAX 요청 모드: 'recommendations' or 'category_contents'
 
-    # 사용자 히스토리를 기반으로 콘텐츠 필터링
-    filtered_contents = [content for content in contents if content["title"] not in user_history['disliked']]
+    asyncio.run(update_contents())
 
-    # 카테고리 필터링
     if selected_category != 'all':
-        filtered_contents = [content for content in filtered_contents if content["category"] == selected_category]
+        filtered_contents = [content for content in contents if content["category"] == selected_category]
+    else:
+        filtered_contents = contents
 
-    # 검색 텍스트 필터링
+    # 검색 텍스트에 따라 필터링
     if search_query:
         filtered_contents = [content for content in filtered_contents if search_query in content["title"].lower()]
 
-
-    # 사용자 히스토리를 기반으로 쿼리 생성
-    queries = user_history['liked'] if user_history['liked'] else [content["title"] for content in contents[:5]]
-    all_recommendations = {}
-
-    # TextDataset과 DataLoader를 사용한 배치 처리
-    query_dataset = TextDataset(queries)
-    query_dataloader = DataLoader(query_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
-
-    for query_batch in query_dataloader:
-        try:
-            # 질문 인코더 서브 토크나이저로 인코딩 및 임베딩 생성
-            query_embeddings = embedding_model.encode(list(query_batch), convert_to_tensor=False)
-
-            # 각 쿼리 임베딩에 대해 유사도 기반 추천 필터링
-            for query_embedding in query_embeddings:
-                batch_recommendations = filter_top_similarities(query_embedding, filtered_contents, top_k=5)
-                for recommendation in batch_recommendations:
-                    rec_id = recommendation["id"]
-                    similarity_score = cosine_similarity([query_embedding], [recommendation["embeddings"]])[0][0]
-                    if rec_id in all_recommendations:
-                        all_recommendations[rec_id]["score"] += similarity_score
-                    else:
-                        all_recommendations[rec_id] = {"content": recommendation, "score": similarity_score}
-        except Exception as e:
-            print(f"Error processing query batch: {e}")
-            continue
-        
-    # 유사도 점수 기준으로 정렬
-    sorted_recommendations = sorted(all_recommendations.values(), key=lambda x: x["score"], reverse=True)
-    final_recommendations = [rec["content"] for rec in sorted_recommendations[:5]]
-    
     if mode == 'recommendations':
-        return jsonify(final_recommendations)
+        embeddings = [content["embedding"] for content in filtered_contents]
+        top_actions = agent.act(embeddings)
+        top_actions = agent.getfilter(top_actions, top_k=5)
+        recommendations = [filtered_contents[action] for action in top_actions]
+
+        for content in recommendations:
+            if isinstance(content.get("embedding"), np.ndarray):
+                content["embedding"] = content["embedding"].tolist()
+
+        return jsonify(recommendations)
+
     elif mode == 'category_contents':
         categorized_contents = defaultdict(list)
         for content in filtered_contents:
-            if isinstance(content.get("embeddings"), np.ndarray):
-                content["embeddings"] = content["embeddings"].tolist()
+            if isinstance(content.get("embedding"), np.ndarray):
+                content["embedding"] = content["embedding"].tolist()
             categorized_contents[content["category"]].append(content)
 
         return jsonify(categorized_contents)
-        
-    # 일반 페이지 렌더링
+
+    # 기본 렌더링 요청 처리
+    embeddings = [content["embedding"] for content in filtered_contents]
+    top_actions = agent.act(embeddings)
+    top_actions = agent.getfilter(top_actions, top_k=5)
+    recommendations = [filtered_contents[action] for action in top_actions]
+
     categorized_contents = defaultdict(list)
     for content in filtered_contents:
         categorized_contents[content["category"]].append(content)
 
     return render_template(
         'index.html',
-        recommendations=final_recommendations[:5],
+        recommendations=recommendations,
         categorized_contents=categorized_contents,
         selected_category=selected_category,
         search_query=search_query
     )
 
-# 피드백 라우트 정의
+
 @app.route('/feedback', methods=['POST'])
 def feedback():
-    global contents, user_history
-
+    global disliked_titles, contents, id_to_index
     feedback_data = request.form
 
     for content_id, feedback in feedback_data.items():
         try:
-            content_id = int(content_id)
-            action = next((idx for idx, content in enumerate(contents) if content["id"] == content_id), None)
-
+            # ID를 인덱스로 변환
+            action = id_to_index.get(int(content_id))
             if action is None:
-                raise KeyError(f"Content ID {content_id} not found in contents.")
+                raise KeyError(f"Content ID {content_id} not found in id_to_index.")
 
+            # 강화 학습 처리
             reward = int(feedback)
-            state = contents[action]["embeddings"]
+            state = contents[action]["embedding"]
 
             if reward < 0:
-                user_history['disliked'].append(contents[action]["title"])
+                disliked_title = contents[action]["title"]
+                disliked_titles.append(disliked_title)
+                print(f"Disliked title added: {disliked_title}")
 
-            # 긍정적인 피드백에 따라 사용자 히스토리 업데이트
-            if reward > 0:
-                user_history['liked'].append(contents[action]["title"])
+            next_state_candidates = [
+                content["embedding"] for content in contents
+                if content["title"] not in disliked_titles
+            ][:5]
+            next_state = random.choice(next_state_candidates) if next_state_candidates else state
+            done = False
+            agent.remember(state, action, reward, next_state, done)
+            agent.replay()
+            agent.update_target_network()
 
         except KeyError as e:
             print(f"Invalid content ID: {content_id}, Error: {e}")
