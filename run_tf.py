@@ -402,9 +402,9 @@ async def fetch_instagram_contents():
     session_file = "session_storage.json"
     explore_url = "https://www.instagram.com/explore/"
     cache_dir = "D:/deep-reco/cached_images"
-    os.makedirs(cache_dir,exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
     contents = []
-    category="SNS"
+    category = "SNS"
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -449,14 +449,21 @@ async def fetch_instagram_contents():
                     img_elem = await item.query_selector('img')
                     thumbnail_url = await img_elem.get_attribute('src') if img_elem else None
 
+                    # 제목/캡션 추출
+                    parent_div = await item.query_selector("div._aagu")
+                    caption_elem = await parent_div.query_selector("div._aacl") if parent_div else None
+                    alt_text = await img_elem.get_attribute('alt') if img_elem else None
+
+                    # 우선순위: 캡션 > 이미지 alt > 기본 제목
+                    title = await caption_elem.inner_text() if caption_elem else alt_text if alt_text else f"No Title {i+1}"
+
                     # 캐싱된 이미지 확인 및 저장
                     if thumbnail_url:
                         # 해시값으로 파일 이름 생성
                         img_hash = hashlib.md5(thumbnail_url.encode()).hexdigest()
-                        cached_file = cache_dir+"/"+f"{img_hash}.jpg"
+                        cached_file = cache_dir + f"/{img_hash}.jpg"
 
-                        if os.path.exists(cached_file)==False:
-                            # 이미지 다운로드
+                        if not os.path.exists(cached_file):
                             print(f"다운로드 중: {thumbnail_url}")
                             async with session.get(thumbnail_url) as response:
                                 if response.status == 200:
@@ -464,25 +471,98 @@ async def fetch_instagram_contents():
                                     async with aiofiles.open(cached_file, mode="wb") as f:
                                         await f.write(content)
 
-                        # 제목/캡션 추출
-                        parent_div = await item.query_selector("div._aagu")
-                        if not parent_div:
-                            continue
-                        caption_elem = await parent_div.query_selector("div._aacl")
-                        title = await caption_elem.inner_text() if caption_elem else "No Title {}".format(i+1)
-                        cached_file_name=os.path.basename(cached_file)
+                        cached_file_name = os.path.basename(cached_file)
 
                         contents.append({
                             "id": i + 1,
                             "title": title,
                             "link": f"https://www.instagram.com{link}",
-                            "thumbnail_url":  f"/images/{cached_file_name}",
-                            "category":category
+                            "thumbnail_url": f"/images/{cached_file_name}",
+                            "category": category
                         })
                 except Exception as e:
                     print(f"Error processing item {i}: {e}")
 
         await browser.close()
+
+    return contents
+
+async def fetch_tiktok_contents(scroll=False):
+    url = "https://www.tiktok.com/explore"
+    category = "SNS"
+    contents = []
+    cache_dir = "D:/deep-reco/cached_images"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=60000)
+
+            # 콘텐츠가 로드될 때까지 대기
+            await page.wait_for_selector('div[data-e2e="explore-item"]', timeout=15000)
+
+            if scroll:
+                # 스크롤하여 콘텐츠 로드
+                prev_height = 0
+                retries = 0
+                while retries < 10:  # 최대 10회 시도
+                    curr_height = await page.evaluate("document.documentElement.scrollHeight")
+                    if curr_height == prev_height:
+                        retries += 1
+                    else:
+                        retries = 0
+                    prev_height = curr_height
+                    await page.evaluate("window.scrollBy(0, 1000)")
+                    await page.wait_for_timeout(1000)
+
+            # 모든 콘텐츠 요소 가져오기
+            items = await page.query_selector_all('div[data-e2e="explore-item"]')
+
+            async with aiohttp.ClientSession() as session:
+                for i, item in enumerate(items):
+                    try:
+                        # 링크와 제목 추출
+                        link_elem = await item.query_selector('a.css-1g95xhm-AVideoContainer')
+                        link = await link_elem.get_attribute('href') if link_elem else None
+
+                        title_elem = await item.query_selector('img')
+                        title = await title_elem.get_attribute('alt') if title_elem else f"No Title {i+1}"
+
+                        # 썸네일 URL 추출
+                        thumbnail_elem = await item.query_selector('img')
+                        thumbnail_url = await thumbnail_elem.get_attribute('src') if thumbnail_elem else None
+
+                        # 캐싱된 이미지 확인 및 저장
+                        if thumbnail_url:
+                            img_hash = hashlib.md5(thumbnail_url.encode()).hexdigest()
+                            cached_file = cache_dir + f"/{img_hash}.jpg"
+
+                            if not os.path.exists(cached_file):
+                                print(f"다운로드 중: {thumbnail_url}")
+                                async with session.get(thumbnail_url) as response:
+                                    if response.status == 200:
+                                        content = await response.read()
+                                        async with aiofiles.open(cached_file, mode="wb") as f:
+                                            await f.write(content)
+
+                            cached_file_name = os.path.basename(cached_file)
+
+                            contents.append({
+                                "id": i + 1,
+                                "title": title,
+                                "link": link,
+                                "thumbnail_url": f"/images/{cached_file_name}",
+                                "category": category
+                            })
+                    except Exception as e:
+                        print(f"Error processing item {i}: {e}")
+
+            await browser.close()
+
+    except Exception as e:
+        print(f"Error fetching TikTok contents: {e}")
 
     return contents
 
@@ -502,6 +582,7 @@ async def update_contents():
         fetch_clien_contents(),
         fetch_inven_contents(),
         fetch_instagram_contents(),
+        fetch_tiktok_contents(),
         fetch_twitch_contents(),
         fetch_youtube_contents(),
         fetch_naver_news_contents(),
