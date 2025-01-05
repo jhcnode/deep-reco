@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
-from concurrent.futures import ThreadPoolExecutor
 from torch.utils.data import DataLoader, Dataset
 import re
 from playwright.sync_api import sync_playwright

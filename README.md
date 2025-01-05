@@ -47,7 +47,6 @@
 
 ### 데이터 관리
 - `asyncio` 및 `aiohttp`: 비동기 데이터 처리
-- `ThreadPoolExecutor`: 병렬 작업 처리
 
 ---
 
