@@ -79,7 +79,7 @@ pip install -r requirements.txt
 
 2. Flask 애플리케이션 실행:
 ```bash
-python app.py
+python run.py
 ```
 
 3. 웹 브라우저에서 다음 주소로 접속:
