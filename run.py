@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright
 import asyncio
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
+from transformers import CLIPProcessor, CLIPModel
 import os
 from sklearn.metrics.pairwise import cosine_similarity
 import shutil
@@ -21,18 +22,15 @@ import hashlib
 import aiohttp
 import aiofiles
 from pathlib import Path
-from transformers import CLIPProcessor, CLIPModel
 from PIL import Image
-import requests
-from sklearn.decomposition import PCA
 from urllib.parse import urlparse, urlunparse
+from sklearn.decomposition import PCA
 
 # Flask 앱 생성
 app = Flask(__name__)
 
-# 모델 저장 디렉토리 설정
-work_dir = "./work_dir"
 cache_dir="./cached_images"
+work_dir = "./work_dir"
 
 os.makedirs(work_dir, exist_ok=True)
 os.makedirs(cache_dir, exist_ok=True)
@@ -68,6 +66,7 @@ try:
 except Exception as e:
     print(f"모델 초기화 중 에러 발생: {e}")
 
+
 # Dataset 클래스 정의
 class TextDataset(Dataset):
     def __init__(self, texts):
@@ -78,52 +77,6 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.texts[idx]["title"]
-    
-@torch.no_grad()
-def get_image_embedding(image_url_or_path):
-    try:
-        global cache_dir
-        
-        # 로컬 파일 처리 (e.g., /images/<filename>)
-        if image_url_or_path.startswith("/images/"):
-            local_file_path = os.path.join(cache_dir, image_url_or_path.lstrip("/images/"))
-            if os.path.isfile(local_file_path):
-                image = Image.open(local_file_path).convert("RGB")
-            else:
-                raise FileNotFoundError(f"Local image not found: {local_file_path}")
-
-        # URL 처리
-        elif image_url_or_path.startswith("http"):
-            # YouTube 썸네일 URL 정리
-            if "i.ytimg.com" in image_url_or_path and "/vi/" in image_url_or_path:
-                parsed_url = urlparse(image_url_or_path)
-                image_url_or_path = urlunparse(parsed_url._replace(query=""))  # 쿼리 문자열 제거
-            
-            # URL 이미지 다운로드
-            response = requests.get(image_url_or_path, stream=True)
-            response.raise_for_status()
-            image = Image.open(response.raw).convert("RGB")
-
-        # 잘못된 입력
-        else:
-            raise ValueError(f"Invalid input: {image_url_or_path}")
-
-        # 이미지 임베딩 생성
-        inputs = clip_processor(images=image, return_tensors="pt")
-        if torch.cuda.is_available():
-            inputs = {k: v.to(torch.device("cuda")) for k, v in inputs.items()}
-            clip_model.to(torch.device("cuda"))
-        
-        outputs = clip_model.get_image_features(**inputs)
-        return outputs[0].cpu().numpy()  # GPU에서 CPU로 변환
-
-    except requests.exceptions.RequestException as e:
-        print(f"Image download error for {image_url_or_path}: {e}")
-    except (ValueError, IOError, FileNotFoundError) as e:
-        print(f"Image embedding error for {image_url_or_path}: {e}")
-    except Exception as e:
-        print(f"Unexpected error for {image_url_or_path}: {e}")
-    return None
 
 # 병렬 임베딩 함수
 @torch.no_grad()
@@ -135,22 +88,6 @@ async def embed_texts_parallel(texts, batch_size=16):
         batch_embeddings = embedding_model.encode(batch, convert_to_tensor=False, batch_size=batch_size, device="cuda" if torch.cuda.is_available() else "cpu")
         embeddings.extend(batch_embeddings)
     return embeddings
-
-def match_embedding_dimensions(text_embedding, image_embedding, target_dim=768):
-    if len(image_embedding) != len(text_embedding):
-        # 단일 샘플에 대한 처리
-        if len(image_embedding.shape) == 1:
-            if len(image_embedding) < target_dim:
-                # 부족한 차원을 0으로 패딩
-                image_embedding = np.pad(image_embedding, (0, target_dim - len(image_embedding)), mode='constant')
-            else:
-                # 초과하는 차원을 잘라냄
-                image_embedding = image_embedding[:target_dim]
-        else:
-            # 다중 샘플에 대해서는 PCA 적용
-            pca = PCA(n_components=target_dim)
-            image_embedding = pca.fit_transform(image_embedding)
-    return text_embedding, image_embedding
 
 async def fetch_clien_contents():
     url = "https://www.clien.net/service/recommend"
@@ -714,33 +651,16 @@ async def update_contents():
     id_to_index = {content["id"]: idx for idx, content in enumerate(contents)}
 
 
-@torch.no_grad()
+# 콘텐츠 제목을 임베딩으로 변환
 async def process_contents(contents):
     if not contents:
         print("process_contents: No contents to process.")
-        return
+        return  # contents가 비어 있으면 반환
 
-    text_embeddings = await embed_texts_parallel(contents)
+    embeddingss = await embed_texts_parallel(contents)
 
-    for content, text_embedding in zip(contents, text_embeddings):
-        content["text_embedding"] = text_embedding
-
-        if content.get("thumbnail_url"):
-            image_embedding = get_image_embedding(content["thumbnail_url"])
-            if image_embedding is not None:
-                # 크기 조정
-                text_embedding, image_embedding = match_embedding_dimensions(
-                    text_embedding, image_embedding, target_dim=len(text_embedding)
-                )
-                # 멀티모달 임베딩 결합
-                multimodal_embedding = np.mean([text_embedding, image_embedding], axis=0)
-                content["embeddings"] = multimodal_embedding.tolist()
-            else:
-                content["embeddings"] = text_embedding  # 이미지 없을 경우 텍스트만 사용
-        else:
-            content["embeddings"] = text_embedding  # 이미지 없을 경우 텍스트만 사용
-
-
+    for content, embeddings in zip(contents, embeddingss):
+        content["embeddings"] = embeddings.tolist()
 
 
 # 시스템 초기화
@@ -748,87 +668,67 @@ contents=None
 
 user_history = {'liked': [], 'disliked': []}  # 단일 사용자 환경을 가정
 
-# 유사도 기반 필터링 함수
-def filter_top_similarities(query_embedding, contents):
-    if not contents:
-        return []
-    content_embeddings = np.array([content["embeddings"] for content in contents])
-    similarities = cosine_similarity([query_embedding], content_embeddings)[0]
-    top_indices = similarities.argsort()[:][::-1]
-    return [contents[i] for i in top_indices]
+def match_embedding_dimensions(text_embedding, image_embedding, target_dim=768):
+    if len(image_embedding) != len(text_embedding):
+        # 단일 샘플에 대한 처리
+        if len(image_embedding.shape) == 1:
+            if len(image_embedding) < target_dim:
+                # 부족한 차원을 0으로 패딩
+                image_embedding = np.pad(image_embedding, (0, target_dim - len(image_embedding)), mode='constant')
+            else:
+                # 초과하는 차원을 잘라냄
+                image_embedding = image_embedding[:target_dim]
+        else:
+            # 다중 샘플에 대해서는 PCA 적용
+            pca = PCA(n_components=target_dim)
+            image_embedding = pca.fit_transform(image_embedding)
+    return text_embedding, image_embedding
 
-@app.route('/')
-def index():
-    global contents, user_history
+@torch.no_grad()
+def get_image_embedding(image_url_or_path):
+    try:
+        global cache_dir
+        
+        # 로컬 파일 처리 (e.g., /images/<filename>)
+        if image_url_or_path.startswith("/images/"):
+            local_file_path = os.path.join(cache_dir, image_url_or_path.lstrip("/images/"))
+            if os.path.isfile(local_file_path):
+                image = Image.open(local_file_path).convert("RGB")
+            else:
+                raise FileNotFoundError(f"Local image not found: {local_file_path}")
 
-    # 콘텐츠 업데이트 비동기 실행
-    asyncio.run(update_contents())
+        # URL 처리
+        elif image_url_or_path.startswith("http"):
+            # YouTube 썸네일 URL 정리
+            if "i.ytimg.com" in image_url_or_path and "/vi/" in image_url_or_path:
+                parsed_url = urlparse(image_url_or_path)
+                image_url_or_path = urlunparse(parsed_url._replace(query=""))  # 쿼리 문자열 제거
+            
+            # URL 이미지 다운로드
+            response = requests.get(image_url_or_path, stream=True)
+            response.raise_for_status()
+            image = Image.open(response.raw).convert("RGB")
 
-    # 쿼리 매개변수 가져오기
-    selected_category = request.args.get('category', 'all')
-    search_query = request.args.get('search_query', '').lower()
-    mode = request.args.get('mode')  # AJAX 요청 모드
+        # 잘못된 입력
+        else:
+            raise ValueError(f"Invalid input: {image_url_or_path}")
 
-    # 부정 피드백의 title을 제외하여 콘텐츠 필터링
-    disliked_titles = {content["title"] for content in user_history['disliked']}
-    filtered_contents = [
-        content for content in contents
-        if content["title"] not in disliked_titles
-    ]
+        # 이미지 임베딩 생성
+        inputs = clip_processor(images=image, return_tensors="pt")
+        if torch.cuda.is_available():
+            inputs = {k: v.to(torch.device("cuda")) for k, v in inputs.items()}
+            clip_model.to(torch.device("cuda"))
+        
+        outputs = clip_model.get_image_features(**inputs)
+        return outputs[0].cpu().numpy()  # GPU에서 CPU로 변환
 
-    # 카테고리 필터링
-    if selected_category != 'all':
-        filtered_contents = [
-            content for content in filtered_contents
-            if content["category"] == selected_category
-        ]
-
-    # 검색 텍스트 필터링
-    if search_query:
-        filtered_contents = [
-            content for content in filtered_contents
-            if search_query in content["title"].lower()
-        ]
-
-    # 사용자 히스토리를 기반으로 쿼리 생성
-    liked_contents = [content for content in contents if content["title"] in {c["title"] for c in user_history['liked']}]
-    queries = liked_contents if liked_contents else filtered_contents[:5]
-
-    # 추천 콘텐츠 생성
-    final_recommendations = get_recommendations(queries, filtered_contents)
-
-    # JSON 응답 처리
-    if mode == 'recommendations':
-        return jsonify([ensure_serializable(rec) for rec in final_recommendations])
-    elif mode == 'category_contents':
-        categorized_contents = defaultdict(list)
-        for content in filtered_contents:
-            categorized_contents[content["category"]].append(ensure_serializable(content))
-        return jsonify(categorized_contents)
-
-    # 일반 페이지 렌더링
-    categorized_contents = defaultdict(list)
-    for content in filtered_contents:
-        categorized_contents[content["category"]].append(content)
-
-    return render_template(
-        'index.html',
-        recommendations=[ensure_serializable(rec) for rec in final_recommendations[:5]],
-        categorized_contents=categorized_contents,
-        selected_category=selected_category,
-        search_query=search_query
-    )
-
-    
-def ensure_serializable(content):
-    """
-    콘텐츠 데이터를 JSON 직렬화 가능하도록 변환
-    - numpy.ndarray는 Python 리스트로 변환
-    """
-    for key, value in content.items():
-        if isinstance(value, np.ndarray):
-            content[key] = value.tolist()
-    return content
+    except requests.exceptions.RequestException as e:
+        print(f"Image download error for {image_url_or_path}: {e}")
+    except (ValueError, IOError, FileNotFoundError) as e:
+        print(f"Image embedding error for {image_url_or_path}: {e}")
+    except Exception as e:
+        print(f"Unexpected error for {image_url_or_path}: {e}")
+    return None
 
 
 def get_multimodal_embedding(query):
@@ -865,6 +765,14 @@ def get_multimodal_embedding(query):
     return multimodal_embedding
 
 
+# 유사도 기반 필터링 함수
+def filter_top_similarities(query_embedding, contents):
+    if not contents:
+        return []
+    content_embeddings = np.array([content["embeddings"] for content in contents])
+    similarities = cosine_similarity([query_embedding], content_embeddings)[0]
+    top_indices = similarities.argsort()[:][::-1]
+    return [contents[i] for i in top_indices]
 
 def get_recommendations(queries, contents, top_k=5):
     """추천 콘텐츠를 반환"""
@@ -895,13 +803,93 @@ def get_recommendations(queries, contents, top_k=5):
             continue
 
     # 점수 기준 정렬 (동일 점수에서는 ID 순 정렬)
-    sorted_recommendations = sorted(
-        all_recommendations.values(),
-        key=lambda x: (-x["score"], x["content"]["id"])
-    )
+    sorted_recommendations = sorted(all_recommendations.values(), key=lambda x: x["score"], reverse=True)
 
     # 상위 top_k 콘텐츠 반환
     return [rec["content"] for rec in sorted_recommendations[:top_k]]
+
+# Flask 라우트 정의
+@app.route('/')
+def index():
+    global contents, user_history
+
+    # 콘텐츠 업데이트 비동기 실행
+    asyncio.run(update_contents())
+
+
+    selected_category = request.args.get('category', 'all')
+    search_query = request.args.get('search_query', '').lower()
+    mode = request.args.get('mode')  # AJAX 요청 모드
+    batch_size = 32
+
+    # 사용자 히스토리를 기반으로 콘텐츠 필터링
+    disliked_titles = {content["title"] for content in user_history['disliked']}
+    filtered_contents = [content for content in contents if content["title"] not in disliked_titles]
+
+    # 카테고리 필터링
+    if selected_category != 'all':
+        filtered_contents = [content for content in filtered_contents if content["category"] == selected_category]
+
+    # 검색 텍스트 필터링
+    if search_query:
+        filtered_contents = [content for content in filtered_contents if search_query in content["title"].lower()]
+
+
+    # 사용자 히스토리를 기반으로 쿼리 생성
+    liked_contents = [content for content in contents if content["title"] in {c["title"] for c in user_history['liked']}]
+    queries = liked_contents if liked_contents else filtered_contents[:5]
+    all_recommendations = {}
+
+    # TextDataset과 DataLoader를 사용한 배치 처리
+    query_dataset = TextDataset(queries)
+    query_dataloader = DataLoader(query_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+
+    for query_batch in query_dataloader:
+        try:
+            # 질문 인코더 서브 토크나이저로 인코딩 및 임베딩 생성
+            query_embeddings = [get_multimodal_embedding(query) for query in query_batch]
+
+            # 각 쿼리 임베딩에 대해 유사도 기반 추천 필터링
+            for query_embedding in query_embeddings:
+                batch_recommendations = filter_top_similarities(query_embedding, filtered_contents)
+                for recommendation in batch_recommendations:
+                    rec_id = recommendation["id"]
+                    similarity_score = cosine_similarity([query_embedding], [recommendation["embeddings"]])[0][0]
+                    if rec_id in all_recommendations:
+                        all_recommendations[rec_id]["score"] += similarity_score
+                    else:
+                        all_recommendations[rec_id] = {"content": recommendation, "score": similarity_score}
+        except Exception as e:
+            print(f"Error processing query batch: {e}")
+            continue
+        
+    # 유사도 점수 기준으로 정렬
+    sorted_recommendations = sorted(all_recommendations.values(), key=lambda x: x["score"], reverse=True)
+    final_recommendations = [rec["content"] for rec in sorted_recommendations[:5]]
+    
+    if mode == 'recommendations':
+        return jsonify(final_recommendations)
+    elif mode == 'category_contents':
+        categorized_contents = defaultdict(list)
+        for content in filtered_contents:
+            if isinstance(content.get("embeddings"), np.ndarray):
+                content["embeddings"] = content["embeddings"].tolist()
+            categorized_contents[content["category"]].append(content)
+
+        return jsonify(categorized_contents)
+        
+    # 일반 페이지 렌더링
+    categorized_contents = defaultdict(list)
+    for content in filtered_contents:
+        categorized_contents[content["category"]].append(content)
+
+    return render_template(
+        'index.html',
+        recommendations=final_recommendations[:5],
+        categorized_contents=categorized_contents,
+        selected_category=selected_category,
+        search_query=search_query
+    )
 
 # 피드백 라우트 정의
 @app.route('/feedback', methods=['POST'])
