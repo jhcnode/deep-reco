@@ -26,6 +26,8 @@ from pathlib import Path
 # Flask 앱 생성
 app = Flask(__name__)
 
+cache_dir="./cached_images"
+
 # 모델 로드
 EMBEDDING_MODEL_NAME = "xlm-r-100langs-bert-base-nli-stsb-mean-tokens"
 embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
@@ -392,16 +394,16 @@ async def fetch_google_news_contents():
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     """로컬에 저장된 이미지를 제공"""
-    cache_dir="D:/deep-reco/cached_images"
+    global cache_dir
     return send_from_directory(cache_dir, filename)
 
 
 async def fetch_instagram_contents():
+    global cache_dir
     username = ""
     password = ""
     session_file = "session_storage.json"
     explore_url = "https://www.instagram.com/explore/"
-    cache_dir = "D:/deep-reco/cached_images"
     os.makedirs(cache_dir, exist_ok=True)
     contents = []
     category = "SNS"
@@ -491,9 +493,8 @@ async def fetch_tiktok_contents(scroll=False):
     url = "https://www.tiktok.com/explore"
     category = "SNS"
     contents = []
-    cache_dir = "D:/deep-reco/cached_images"
+    global cache_dir
     os.makedirs(cache_dir, exist_ok=True)
-
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
