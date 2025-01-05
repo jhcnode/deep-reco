@@ -117,3 +117,10 @@ http://127.0.0.1:5000
 - 확장 가능한 구조로 다양한 플랫폼의 데이터를 통합.
 - GPU를 활용한 임베딩 처리를 통해 효율적인 계산.
 - 사용자 피드백을 적극적으로 활용하여 점진적인 성능 개선.
+
+---
+## 웹페이지 결과
+![chrome_ARl2paw38k](https://github.com/user-attachments/assets/1e7bea71-2077-41cc-a6a7-9c7e4fbbdd4d)
+![chrome_C5evV64Qxz](https://github.com/user-attachments/assets/1b70414d-83e6-4d26-84ad-ffe12cea0020)
+
+
