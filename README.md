@@ -19,10 +19,25 @@
 - **기술**: Playwright를 사용한 웹 스크래핑과 비동기 방식으로 빠르게 데이터를 수집.
 
 ### 2. 임베딩 및 유사도 분석
-- **모델**: `SentenceTransformer` (xlm-r-100langs-bert-base-nli-stsb-mean-tokens)
-- **기능**:
-  - 콘텐츠 제목을 임베딩으로 변환하여 추천 알고리즘에 활용.
-  - `cosine similarity`를 통해 사용자의 선호도와 콘텐츠 간 유사성을 분석.
+- **모델**:
+  - **텍스트 모델**:
+    - `SentenceTransformer` (xlm-r-100langs-bert-base-nli-stsb-mean-tokens)
+  - **이미지 모델**:
+    - `CLIPProcessor` 및 `CLIPModel` (openai/clip-vit-base-patch32)
+    - `CLIP-ViT-L-14`
+  - **기능**:
+    - **텍스트 임베딩**: 
+      - `SentenceTransformer` 모델을 활용하여 텍스트를 벡터화.
+      - 텍스트 데이터를 입력받아 고차원 벡터로 변환, 각 벡터는 텍스트 간 의미적 유사성을 반영.
+    - **이미지 임베딩**:
+      - `CLIPProcessor` 및 `CLIPModel`을 사용하여 이미지 데이터를 벡터화.
+      - 썸네일 이미지와 같은 시각적 데이터를 텍스트 임베딩과 결합하여 다차원적으로 분석.
+    - **멀티모달 임베딩**:
+      - 텍스트와 이미지 벡터를 결합하여 단일 벡터로 통합.
+      - 텍스트와 이미지를 모두 활용하여 더 정교한 추천 결과를 생성.
+    - **유사도 분석**:
+      - `cosine similarity`를 통해 사용자가 좋아하거나 싫어한 콘텐츠와 새로운 콘텐츠 간의 유사성을 계산.
+      - 유사도 점수가 높은 콘텐츠를 선별하여 추천 목록에 포함.
 
 ### 3. 개인화된 추천
 - 사용자의 긍정 및 부정 피드백을 수집하여 추천 결과를 지속적으로 업데이트.
@@ -34,6 +49,10 @@
 ### 5. 캐싱 및 이미지 제공
 - 스크래핑한 이미지와 데이터를 로컬에 캐싱하여 효율성을 향상.
 
+### 6. 멀티모달 임베딩
+- 텍스트와 이미지 데이터를 결합하여 멀티모달 임베딩 생성.
+- 텍스트 데이터(`SentenceTransformer`)와 이미지 데이터(`CLIPProcessor`, `CLIPModel`)를 통합하여 더 나은 추천 제공.
+
 ---
 
 ## 기술 스택
@@ -43,6 +62,10 @@
 - **Playwright**: 비동기 웹 스크래핑
 - **Torch**: 딥러닝 모델 처리
 - **SentenceTransformers**: 텍스트 임베딩 생성
+  - Hugging Face 생태계 기반으로 설계된 라이브러리로, 다양한 프리트레인 모델 지원.
+  - NLP 작업에 최적화되어 문장 간 의미적 유사성을 계산.
+- **Transformers**: Hugging Face의 강력한 라이브러리로 다양한 언어 및 비전 모델 제공.
+  - `CLIPModel`과 같은 멀티모달 모델 활용.
 - **Scikit-learn**: 코사인 유사도 계산
 
 ### 데이터 관리
@@ -118,8 +141,8 @@ http://127.0.0.1:5000
 - 사용자 피드백을 적극적으로 활용하여 점진적인 성능 개선.
 
 ---
+
 ## 웹페이지 결과
 ![chrome_ARl2paw38k](https://github.com/user-attachments/assets/1e7bea71-2077-41cc-a6a7-9c7e4fbbdd4d)
 ![chrome_C5evV64Qxz](https://github.com/user-attachments/assets/1b70414d-83e6-4d26-84ad-ffe12cea0020)
-
 
